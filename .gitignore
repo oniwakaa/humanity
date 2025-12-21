@@ -1,0 +1,89 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+*.pyc
+venv/
+.venv/
+env/
+ENV/
+.pytest_cache/
+*.egg-info/
+dist/
+build/
+
+# Configuration & Secrets
+config.json
+config/*.json
+.env
+.env.*
+!.env.example
+settings/local_*.py
+*.key
+*.pem
+secrets/
+.secrets/
+
+# Authentication & Session Data
+.auth/
+storage_states/
+*.session
+
+# Data & Storage
+data/
+*.db
+*.sqlite
+*.sqlite3
+storage/*.jsonl
+storage/qdrant/
+qdrant_storage/
+.qdrant/
+
+# Models & Embeddings
+models/
+*.bin
+*.gguf
+*.ggml
+embeddings/
+*.pt
+*.pth
+*.safetensors
+
+# Logs & Temporary Files
+*.log
+logs/
+tmp/
+temp/
+*.tmp
+
+# API & Pipeline Artifacts
+artifacts/
+outputs/
+results/
+*.json.bak
+
+# OS
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+
+# IDE
+.vscode/
+.idea/
+*.sublime-*
+.project
+.pydevproject
+
+# Vendor artifacts (keep source, ignore builds)
+vendor/whisper.cpp/main
+vendor/whisper.cpp/server
+vendor/whisper.cpp/build/
+vendor/whisper.cpp/bindings/python/build/
+
+# Coverage & Testing
+.coverage
+htmlcov/
+.tox/
+.hypothesis/
