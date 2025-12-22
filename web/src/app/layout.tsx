@@ -3,7 +3,7 @@ import { Montserrat } from "next/font/google";
 import "./globals.css";
 import { ThemeProvider } from "@/components/theme-provider";
 
-import { DottedSurface } from "@/components/ui/dotted-surface";
+
 
 const montserrat = Montserrat({
   subsets: ["latin"],
@@ -32,7 +32,6 @@ export default function RootLayout({
           enableSystem
           disableTransitionOnChange
         >
-          <DottedSurface />
           {children}
         </ThemeProvider>
       </body>

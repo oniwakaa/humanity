@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Typewriter } from "@/components/ui/typewriter-text";
 import { GetStartedButton } from "@/components/ui/get-started-button";
+import { DottedSurface } from "@/components/ui/dotted-surface";
 import ProfileModal from "@/components/onboarding/profile-modal";
 import SetupModal from "@/components/onboarding/setup-modal";
 
@@ -84,7 +85,7 @@ export default function Home() {
 
   return (
     <div className="relative flex min-h-[80vh] flex-col items-center justify-center overflow-hidden">
-
+      <DottedSurface />
 
       <main className="z-10 flex flex-col items-center gap-6 text-center">
         <div className="flex flex-col items-center justify-center space-y-4">
