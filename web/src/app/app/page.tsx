@@ -1,12 +1,14 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { BGPattern } from "@/components/ui/bg-pattern";
 import { HumanityCard } from "@/components/dashboard/humanity-card";
 import { Typewriter } from "@/components/ui/typewriter-text"; // Verify this import path aligns with existing component
 import { motion } from "framer-motion";
 
 export default function DashboardPage() {
+    const router = useRouter();
     const [userName, setUserName] = useState<string>("");
 
     useEffect(() => {
@@ -36,7 +38,7 @@ export default function DashboardPage() {
                 { color: 'rgba(255, 205, 210, 1)', stop: '65%' },  // Soft Pink
                 { color: 'rgba(230, 210, 255, 1)', stop: '100%' }  // Lavender
             ],
-            onClick: () => console.log("Navigate to Story"),
+            onClick: () => router.push("/app/story"),
         },
         {
             title: "Daily Reflection",
