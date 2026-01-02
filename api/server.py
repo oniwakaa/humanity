@@ -290,6 +290,63 @@ def submit_daily(sub: DailySubmission):
     except Exception as e:
          raise HTTPException(status_code=500, detail=str(e))
 
+class ChatRequest(BaseModel):
+    message: str
+    context: Optional[List[Dict[str, str]]] = []
+
+@app.post("/chat")
+def chat_message(req: ChatRequest):
+    """
+    AI-guided diary chat endpoint.
+    Receives user message and conversation context, returns AI response.
+    """
+    orch = require_orchestrator()
+    
+    if not req.message.strip():
+        raise HTTPException(status_code=400, detail="Message cannot be empty")
+    
+    try:
+        # Build conversation context for the AI
+        context_text = ""
+        if req.context:
+            for msg in req.context[-5:]:  # Last 5 messages for context
+                role = msg.get("role", "user")
+                content = msg.get("content", "")
+                context_text += f"{role.capitalize()}: {content}\n"
+        
+        # Create a reflective prompt for the diary
+        prompt = f"""You are a compassionate AI journaling companion helping the user explore their thoughts and feelings.
+Based on the conversation so far and the user's latest message, provide a thoughtful, brief response (2-3 sentences) that:
+- Acknowledges what they've shared
+- Asks a gentle follow-up question to deepen their reflection
+- Uses warm, supportive language
+
+Previous conversation:
+{context_text}
+
+User's message: {req.message}
+
+Your response:"""
+        
+        # Use orchestrator's Ollama connection for generation
+        response = orch.ollama.generate(prompt)
+        
+        # Also save this as a diary entry
+        orch.process_new_entry(
+            text=req.message,
+            feature_type="open_diary",
+            tags=["diary", "chat"]
+        )
+        
+        return {"response": response}
+    except Exception as e:
+        print(f"Chat error: {e}")
+        # Return a fallback response instead of failing completely
+        return {
+            "response": "I'm here to listen. Could you tell me more about what's on your mind?"
+        }
+
+
 if __name__ == "__main__":
     import uvicorn
     # Clean run
