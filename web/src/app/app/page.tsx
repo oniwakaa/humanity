@@ -68,7 +68,7 @@ export default function DashboardPage() {
                 { color: 'rgba(255, 215, 160, 1)', stop: '65%' },  // Golden Yellow
                 { color: 'rgba(210, 245, 180, 1)', stop: '100%' }  // Pale Lime
             ],
-            onClick: () => router.push("/app/diary"),
+            onClick: () => router.push("/app/diary-book"),
         },
     ];
 
