@@ -28,9 +28,12 @@ def require_orchestrator():
         raise HTTPException(status_code=503, detail="System not configured. Please complete setup.")
     return orchestrator
 
+from api.database import init_db
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
+    init_db() # Create tables
     if worker:
         task = asyncio.create_task(worker.run())
     else:
@@ -328,23 +331,175 @@ User's message: {req.message}
 
 Your response:"""
         
-        # Use orchestrator's Ollama connection for generation
-        response = orch.ollama.generate(prompt)
-        
-        # Also save this as a diary entry
-        orch.process_new_entry(
-            text=req.message,
-            feature_type="open_diary",
-            tags=["diary", "chat"]
-        )
-        
+        # Use orchestrator's RAG Chat Logic
+        response = orch.chat_session(req.message, req.context)
         return {"response": response}
     except Exception as e:
         print(f"Chat error: {e}")
-        # Return a fallback response instead of failing completely
         return {
             "response": "I'm here to listen. Could you tell me more about what's on your mind?"
         }
+
+class DiarySaveRequest(BaseModel):
+    transcript: List[Dict[str, str]]
+
+class DiaryEntrySummary(BaseModel):
+    id: str
+    date: str
+    title: str
+    summary: str
+
+@app.get("/diary/entries", response_model=List[DiaryEntrySummary])
+def get_diary_entries(limit: int = 20, offset: int = 0):
+    """
+    Fetches diary entry summaries for the Diary Book UI.
+    Returns entries with feature_type='open_diary', transformed to summary format.
+    """
+    orch = require_orchestrator()
+    
+    try:
+        # Use DBManager directly for filtered query
+        from api.database import SessionLocal
+        from api.models import Entry
+        
+        db = SessionLocal()
+        try:
+            entries = (
+                db.query(Entry)
+                .filter(Entry.feature_type == "open_diary")
+                .order_by(Entry.created_at.desc())
+                .offset(offset)
+                .limit(limit)
+                .all()
+            )
+            
+            summaries = []
+            for entry in entries:
+                # Sanitize: remove <think>...</think> tags from stored content
+                import re
+                def sanitize_think_tags(text: str) -> str:
+                    return re.sub(r'<think>[\s\S]*?</think>', '', text, flags=re.IGNORECASE).strip()
+                
+                clean_text = sanitize_think_tags(entry.text)
+                
+                # Extract title from first line, summary from rest
+                lines = clean_text.split('\n', 1)
+                title = lines[0][:50] if lines else "Diary Entry"
+                
+                # Clean title: remove quotes, "Diary Session:" prefix, etc.
+                title = title.strip().strip('"').strip()
+                if title.lower().startswith("diary session") or not title:
+                    title = "Diary Entry"
+                    
+                # Get summary: use first paragraph or truncated text
+                summary_text = lines[1] if len(lines) > 1 else clean_text
+                # Remove the transcript portion 
+                if "---" in summary_text:
+                    summary_text = summary_text.split("---")[0]
+                summary_text = summary_text.strip()[:200]
+                
+                # Format date nicely
+                date_str = entry.created_at.strftime("%B %d, %Y") if entry.created_at else "Unknown"
+                
+                summaries.append(DiaryEntrySummary(
+                    id=entry.id,
+                    date=date_str,
+                    title=title if title else "Diary Entry",
+                    summary=summary_text if summary_text else "A diary entry."
+                ))
+            
+            return summaries
+        finally:
+            db.close()
+            
+    except Exception as e:
+        print(f"Error fetching diary entries: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to fetch entries: {e}")
+
+class DiaryEntryFull(BaseModel):
+    id: str
+    date: str
+    title: str
+    summary: str
+    transcript: List[Dict[str, str]]
+
+@app.get("/diary/entries/{entry_id}", response_model=DiaryEntryFull)
+def get_diary_entry(entry_id: str):
+    """
+    Fetches a single diary entry with its full transcript for read-only view.
+    """
+    require_orchestrator()
+    
+    try:
+        from api.database import SessionLocal
+        from api.models import Entry
+        import re
+        
+        def sanitize_think_tags(text: str) -> str:
+            return re.sub(r'<think>[\s\S]*?</think>', '', text, flags=re.IGNORECASE).strip()
+        
+        db = SessionLocal()
+        try:
+            entry = db.query(Entry).filter(Entry.id == entry_id).first()
+            
+            if not entry:
+                raise HTTPException(status_code=404, detail="Entry not found")
+            
+            clean_text = sanitize_think_tags(entry.text)
+            
+            # Parse transcript from stored format
+            # Format: "Summary\n\n---\n[Full Transcript]\nrole: content\nrole: content"
+            transcript = []
+            if "---" in clean_text and "[Full Transcript]" in clean_text:
+                transcript_section = clean_text.split("[Full Transcript]")[-1].strip()
+                for line in transcript_section.split('\n'):
+                    line = line.strip()
+                    if line.startswith("user:"):
+                        transcript.append({"role": "user", "content": line[5:].strip()})
+                    elif line.startswith("assistant:"):
+                        transcript.append({"role": "assistant", "content": line[10:].strip()})
+            
+            # Extract title and summary
+            lines = clean_text.split('\n', 1)
+            title = lines[0][:50] if lines else "Diary Entry"
+            title = title.strip().strip('"').strip()
+            if title.lower().startswith("diary session") or not title:
+                title = "Diary Entry"
+            
+            summary_text = lines[1].split("---")[0].strip()[:200] if len(lines) > 1 and "---" in lines[1] else ""
+            
+            date_str = entry.created_at.strftime("%B %d, %Y") if entry.created_at else "Unknown"
+            
+            return DiaryEntryFull(
+                id=entry.id,
+                date=date_str,
+                title=title if title else "Diary Entry",
+                summary=summary_text if summary_text else "A diary entry.",
+                transcript=transcript
+            )
+        finally:
+            db.close()
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error fetching diary entry: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to fetch entry: {e}")
+
+@app.post("/diary/save")
+def save_diary(req: DiarySaveRequest):
+    """
+    Finalizes a chat session: Summarizes, Persists, and Embeds.
+    """
+    orch = require_orchestrator()
+    if not req.transcript:
+         raise HTTPException(status_code=400, detail="Transcript empty")
+         
+    try:
+        entry_id = orch.save_diary_session(req.transcript)
+        return {"id": entry_id, "message": "Diary saved successfully."}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 if __name__ == "__main__":

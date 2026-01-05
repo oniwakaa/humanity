@@ -4,32 +4,11 @@ import * as React from "react";
 import { useState, useCallback, lazy, Suspense } from "react";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { DiaryBookCover } from "@/components/diary/book-cover";
 import { DiaryBookOpen } from "@/components/diary/book-open";
-
-// Mock chat summaries - replace with real data fetch
-const mockChatSummaries = [
-    {
-        id: "1",
-        date: "January 1, 2026",
-        title: "New Year Reflections",
-        summary: "Reflected on the past year's achievements and set intentions for the new year. Explored feelings of gratitude and hope for what's to come.",
-    },
-    {
-        id: "2",
-        date: "December 28, 2025",
-        title: "Finding Balance",
-        summary: "Discussed the challenge of maintaining work-life balance during the holiday season. Discovered strategies for staying present with family.",
-    },
-    {
-        id: "3",
-        date: "December 20, 2025",
-        title: "Letting Go",
-        summary: "Explored the difficulty of releasing old habits and patterns. Recognized the courage it takes to embrace change and growth.",
-    },
-];
+import { useDiaryEntries } from "@/hooks/use-diary-entries";
 
 interface DiaryBookProps {
     className?: string;
@@ -38,6 +17,7 @@ interface DiaryBookProps {
 export function DiaryBook({ className }: DiaryBookProps) {
     const router = useRouter();
     const [isOpen, setIsOpen] = useState(false);
+    const { entries, isLoading, error, refetch } = useDiaryEntries();
 
     const handleOpenBook = useCallback(() => {
         setIsOpen(true);
@@ -54,6 +34,11 @@ export function DiaryBook({ className }: DiaryBookProps) {
     const handleBack = useCallback(() => {
         router.push("/app");
     }, [router]);
+
+    // Refetch entries when returning from diary creation
+    const handleRefresh = useCallback(async () => {
+        await refetch();
+    }, [refetch]);
 
     return (
         <div className={className}>
@@ -97,11 +82,17 @@ export function DiaryBook({ className }: DiaryBookProps) {
                         transition={{ duration: 0.5, ease: "easeOut" }}
                         className="fixed inset-0 z-50 bg-background"
                     >
-                        <DiaryBookOpen
-                            summaries={mockChatSummaries}
-                            onClose={handleCloseBook}
-                            onNewEntry={handleNewEntry}
-                        />
+                        {isLoading ? (
+                            <div className="h-full flex items-center justify-center">
+                                <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+                            </div>
+                        ) : (
+                            <DiaryBookOpen
+                                summaries={entries}
+                                onClose={handleCloseBook}
+                                onNewEntry={handleNewEntry}
+                            />
+                        )}
                     </motion.div>
                 )}
             </AnimatePresence>

@@ -3,10 +3,11 @@
 import * as React from "react";
 import { useRef, useCallback, useState } from "react";
 import HTMLFlipBook from "react-pageflip";
-import { ChevronLeft, ChevronRight, X, Plus, PenLine } from "lucide-react";
-import { motion } from "framer-motion";
+import { ChevronLeft, ChevronRight, X, Plus, PenLine, Loader2 } from "lucide-react";
+import { motion, AnimatePresence } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { ChatHistory } from "@/components/diary/chat-history";
 
 interface ChatSummary {
     id: string;
@@ -47,20 +48,26 @@ const DiaryPage = React.forwardRef<
 DiaryPage.displayName = "DiaryPage";
 
 // Summary page content
-function SummaryPage({ summary }: { summary: ChatSummary }) {
+function SummaryPage({
+    summary,
+    onViewChat
+}: {
+    summary: ChatSummary;
+    onViewChat: (id: string) => void;
+}) {
     return (
         <div className="h-full flex flex-col text-stone-800">
-            <div className="mb-4">
-                <span className="text-xs uppercase tracking-widest text-stone-500">
+            <div className="mb-6">
+                <span className="text-sm uppercase tracking-widest text-stone-500">
                     {summary.date}
                 </span>
             </div>
 
-            <h3 className="font-serif text-xl font-semibold mb-4 text-stone-900">
+            <h3 className="font-serif text-2xl font-semibold mb-6 text-stone-900">
                 {summary.title}
             </h3>
 
-            <p className="font-serif text-base leading-relaxed text-stone-700 flex-1">
+            <p className="font-serif text-lg leading-loose text-stone-700 flex-1">
                 {summary.summary}
             </p>
 
@@ -68,6 +75,7 @@ function SummaryPage({ summary }: { summary: ChatSummary }) {
                 <Button
                     variant="ghost"
                     size="sm"
+                    onClick={() => onViewChat(summary.id)}
                     className="text-stone-600 hover:text-stone-900 hover:bg-amber-100/50"
                 >
                     View Full Chat →
@@ -81,8 +89,8 @@ function SummaryPage({ summary }: { summary: ChatSummary }) {
 function NewEntryPage({ onNewEntry }: { onNewEntry: () => void }) {
     return (
         <div className="h-full flex flex-col items-center justify-center text-stone-800">
-            <div className="text-center space-y-6">
-                <p className="font-serif text-lg italic text-stone-600">
+            <div className="text-center space-y-8">
+                <p className="font-serif text-xl italic text-stone-600">
                     Dear Diary...
                 </p>
 
@@ -111,6 +119,15 @@ export function DiaryBookOpen({
     const [currentPage, setCurrentPage] = useState(0);
     const totalPages = summaries.length + 1; // +1 for new entry page
 
+    // Chat History Modal State
+    const [selectedChat, setSelectedChat] = useState<{
+        id: string;
+        title: string;
+        date: string;
+        messages: any[];
+    } | null>(null);
+    const [isLoadingChat, setIsLoadingChat] = useState(false);
+
     const handleFlip = useCallback((e: { data: number }) => {
         setCurrentPage(e.data);
     }, []);
@@ -127,8 +144,45 @@ export function DiaryBookOpen({
         bookRef.current?.pageFlip()?.flip(totalPages - 1);
     }, [totalPages]);
 
+    const handleViewChat = useCallback(async (id: string) => {
+        // Find summary info immediately for partial data
+        const summary = summaries.find(s => s.id === id);
+        if (!summary) return;
+
+        setIsLoadingChat(true);
+        try {
+            const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"}/diary/entries/${id}`);
+            if (!response.ok) throw new Error("Failed to fetch chat");
+
+            const data = await response.json();
+            setSelectedChat({
+                id: data.id,
+                title: data.title,
+                date: data.date,
+                messages: data.transcript || []
+            });
+        } catch (error) {
+            console.error("Error loading chat:", error);
+            // Fallback or error toast in real app
+        } finally {
+            setIsLoadingChat(false);
+        }
+    }, [summaries]);
+
     return (
-        <div className="h-full flex flex-col">
+        <div className="h-full flex flex-col relative">
+            {/* Chat History Modal */}
+            <AnimatePresence>
+                {selectedChat && (
+                    <ChatHistory
+                        title={selectedChat.title}
+                        date={selectedChat.date}
+                        messages={selectedChat.messages}
+                        onClose={() => setSelectedChat(null)}
+                    />
+                )}
+            </AnimatePresence>
+
             {/* Header */}
             <motion.header
                 initial={{ opacity: 0, y: -10 }}
@@ -163,17 +217,17 @@ export function DiaryBookOpen({
 
             {/* Book Content */}
             <div className="flex-1 flex items-center justify-center p-4 sm:p-8">
-                <div className="relative">
+                <div className="relative max-h-[95vh]">
                     {/* @ts-ignore - react-pageflip types */}
                     <HTMLFlipBook
                         ref={bookRef}
-                        width={320}
-                        height={450}
+                        width={550}
+                        height={750}
                         size="stretch"
-                        minWidth={280}
-                        maxWidth={500}
-                        minHeight={400}
-                        maxHeight={600}
+                        minWidth={400}
+                        maxWidth={600}
+                        minHeight={560}
+                        maxHeight={850}
                         showCover={false}
                         mobileScrollSupport={true}
                         onFlip={handleFlip}
@@ -195,7 +249,15 @@ export function DiaryBookOpen({
                         {/* Summary Pages */}
                         {summaries.map((summary) => (
                             <DiaryPage key={summary.id}>
-                                <SummaryPage summary={summary} />
+                                <SummaryPage
+                                    summary={summary}
+                                    onViewChat={handleViewChat}
+                                />
+                                {isLoadingChat && (
+                                    <div className="absolute inset-0 bg-white/50 flex items-center justify-center">
+                                        <Loader2 className="h-6 w-6 animate-spin text-amber-600" />
+                                    </div>
+                                )}
                             </DiaryPage>
                         ))}
 

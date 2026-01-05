@@ -12,6 +12,15 @@ interface ChatMessageBubbleProps {
     className?: string;
 }
 
+/**
+ * Sanitizes AI output by removing Chain-of-Thought `<think>` tags.
+ * These tags are emitted by reasoning models (e.g., DeepSeek) and should not be shown to users.
+ */
+function sanitizeAIContent(content: string): string {
+    // Remove <think>...</think> blocks including multiline content
+    return content.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+}
+
 // User Message: Compact gray bubble style
 function UserMessage({ message }: { message: ChatMessage }) {
     return (
@@ -43,14 +52,14 @@ function AIMessage({
             <div className="py-1">
                 {isStreaming ? (
                     <TextGenerateEffect
-                        words={message.content}
+                        words={sanitizeAIContent(message.content)}
                         className="text-sm leading-[1.75] text-foreground font-normal"
                         duration={0.2}
                         filter={false}
                     />
                 ) : (
                     <p className="text-sm leading-[1.75] text-foreground whitespace-pre-wrap">
-                        {message.content}
+                        {sanitizeAIContent(message.content)}
                     </p>
                 )}
             </div>
