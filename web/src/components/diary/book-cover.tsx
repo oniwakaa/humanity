@@ -31,24 +31,24 @@ export function DiaryBookCover({ onClick, className }: DiaryBookCoverProps) {
                 color="#8B4513"
                 textColor="#F5F5DC"
                 texture={true}
-                depth={8}
-                width={280}
+                depth={10}
+                width={380}
                 variant="default"
             >
-                <div className="p-6 flex flex-col items-center justify-center h-full text-center">
-                    <div className="space-y-3">
+                <div className="p-8 flex flex-col items-center justify-center h-full text-center">
+                    <div className="space-y-4">
                         <h2
-                            className="text-2xl font-serif font-semibold tracking-wide"
+                            className="text-3xl font-serif font-semibold tracking-wide"
                             style={{ color: "var(--text-color, #F5F5DC)" }}
                         >
                             My Diary
                         </h2>
                         <div
-                            className="w-16 h-0.5 mx-auto opacity-60"
+                            className="w-20 h-0.5 mx-auto opacity-60"
                             style={{ backgroundColor: "var(--text-color, #F5F5DC)" }}
                         />
                         <p
-                            className="text-sm font-serif italic opacity-80"
+                            className="text-base font-serif italic opacity-80"
                             style={{ color: "var(--text-color, #F5F5DC)" }}
                         >
                             A journey of reflection

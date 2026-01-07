@@ -8,6 +8,7 @@ class MemoryLayer:
         self.client = QdrantClient(url=url)
         self.collection_name = collection_name
         self.embedding_dim = embedding_dim
+        self.ensure_collection()
 
     def check_health(self) -> bool:
         """Checks if Qdrant is reachable."""
@@ -69,13 +70,19 @@ class MemoryLayer:
                 )
             query_filter = Filter(must=conditions)
 
-        hits = self.client.search(
+        hits_response = self.client.query_points(
             collection_name=self.collection_name,
-            query_vector=query_vector,
+            query=query_vector,
             limit=limit,
             query_filter=query_filter
         )
-        return [hit.payload for hit in hits]
+        # Return merged payload + score
+        results = []
+        for hit in hits_response.points:
+            item = hit.payload.copy()
+            item["_score"] = hit.score
+            results.append(item)
+        return results
 
     def delete_entry(self, entry_id: str):
         """Deletes all chunks associated with an entry_id."""

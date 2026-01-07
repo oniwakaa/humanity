@@ -86,7 +86,7 @@ export function Book(props: BookProps) {
   );
 }
 
- 
+
 import { ComponentProps } from 'react';
 
 type FlexAlignItems = 'stretch' | 'start' | 'end' | 'center';

@@ -53,7 +53,7 @@ export default function DashboardPage() {
                 { color: 'rgba(150, 225, 200, 1)', stop: '65%' },  // Mint
                 { color: 'rgba(200, 245, 220, 1)', stop: '100%' }  // Pale Lime
             ],
-            onClick: () => console.log("Navigate to Reflection"),
+            onClick: () => router.push("/app/reflection"),
         },
         {
             title: "Your Diary",

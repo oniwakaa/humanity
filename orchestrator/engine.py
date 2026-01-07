@@ -1,7 +1,7 @@
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from settings.manager import SettingsManager
 from connectors.ollama import OllamaClient
-from storage.journal import JournalStorage
+from storage.db_manager import DBManager
 from storage.memory import MemoryLayer
 from utils.safety import SafetyGuardrails
 from orchestrator.queues import JobQueue
@@ -13,7 +13,7 @@ from orchestrator.survey import SurveyManager
 class Orchestrator:
     def __init__(self, settings_manager: SettingsManager):
         self.settings = settings_manager.get_config()
-        self.journal = JournalStorage(self.settings.storage_path)
+        self.journal = DBManager() # Replaces JournalStorage(path)
         self.memory = MemoryLayer(
             self.settings.qdrant.url, 
             self.settings.qdrant.collection_name
@@ -125,16 +125,30 @@ class Orchestrator:
             
         try:
             # 1. Generate Embedding
-            vec = self.ollama.embed(self.settings.ollama.embed_model, job["text"])
-            
             # 2. Upsert to Qdrant
-            # Need to chunk properly in real impl
-            chunks = [{
-                "entry_id": job["entry_id"],
-                "text": job["text"],
-                "chunk_id": f"{job['entry_id']}_0"
-            }]
-            self.memory.upsert_chunks(chunks, [vec])
+            import uuid
+            from utils.text_processing import chunk_text
+            
+            text_chunks = chunk_text(job["text"])
+            chunks_to_upsert = []
+            vectors_to_upsert = []
+            
+            for i, chunk in enumerate(text_chunks):
+                # Embed each chunk
+                vec = self.ollama.embed(self.settings.ollama.embed_model, chunk)
+                
+                chunk_id = str(uuid.uuid5(uuid.UUID(job['entry_id']), str(i)))
+                
+                chunks_to_upsert.append({
+                    "entry_id": job["entry_id"],
+                    "text": chunk,
+                    "chunk_index": i,
+                    "chunk_id": chunk_id
+                })
+                vectors_to_upsert.append(vec)
+
+            if chunks_to_upsert:
+                self.memory.upsert_chunks(chunks_to_upsert, vectors_to_upsert)
             
             # 3. Remove from queue
             self.embed_queue.pop()
@@ -186,27 +200,31 @@ class Orchestrator:
             return "I'm having trouble thinking of a reflection right now. Please tell me more."
 
     def generate_daily_questions(self) -> Dict[str, Any]:
-        """Orchestreates generation of daily questions."""
+        """Orchestrates generation of daily questions."""
         from orchestrator.daily_questions import DailyQuestionGenerator
         from datetime import datetime
         from uuid import uuid4
         
+        # 0. Check for existing Cycle for today (Latency/Caching Strategy)
+        # Note: In a real app we query DB. For now, we generate fresh or check last entry if we had that logic.
+        # But prompt asked for "Propose... or implement". 
+        # We will implement "Generate Fresh" but efficiently.
+        
         generator = DailyQuestionGenerator()
         cycle_id = str(uuid4())
         
-        # 1. Retrieve Context (Naive RAG: Random recent chunks)
-        # In real impl, we specific query filters for 'your_story' or 'journal'
+        # 1. Retrieve Context (Hybrid Input)
         context_text = ""
         try:
-            # We assume embedding of "Current life themes" or similar generic query
-            query_vec = self.ollama.embed(self.settings.ollama.embed_model, "Meaningful recent events and feelings")
+            # Query vector store for recent themes
+            query_vec = self.ollama.embed(self.settings.ollama.embed_model, "Recent thoughts patterns feelings events")
             hits = self.memory.search(query_vec, limit=5)
-            context_text = "\n".join([h.get("text", "") for h in hits])
-        except:
-             pass
+            context_text = "\n".join([f"- {h.get('text', '')}" for h in hits])
+        except Exception as e:
+             print(f"Context retrieval failed: {e}")
 
-        # 2. Call LLM
-        questions = generator.STATIC_FALLBACK
+        # 2. Call LLM (Dynamic Part)
+        dynamic_questions = []
         try:
             sys_prompt = generator.build_system_prompt(self.user_profile)
             user_prompt = generator.build_user_prompt(context_text)
@@ -215,18 +233,26 @@ class Orchestrator:
                 {"role": "system", "content": sys_prompt},
                 {"role": "user", "content": user_prompt}
             ], options={"num_ctx": self.settings.ollama.num_ctx})
-            content = resp.get("message", {}).get("content", "")
-            questions = generator.parse_response(content)
-        except Exception as e:
-            print(f"Daily Gen Failed: {e}")
             
-        # 3. Persist Set
+            content = resp.get("message", {}).get("content", "")
+            dynamic_questions = generator.parse_response(content)
+        except Exception as e:
+            print(f"Daily Gen LLM Failed: {e}")
+            
+        # 3. Merge (Hybrid Output)
+        final_questions = generator.combine_questions(dynamic_questions)
+            
+        # 4. Persist Set
         payload = {
             "cycle_id": cycle_id,
             "date": datetime.now().isoformat(),
-            "questions": questions
+            "questions": final_questions
         }
         
+        # Save to DB via new Manager
+        # We store as a special entry type or better, use the DailyCycle model if we updated manager to support it.
+        # Current DBManager only supports Entry.
+        # Let's save as Entry feature_type="daily_questions_set" for MVP compatibility
         import json
         self.process_new_entry(
             text=json.dumps(payload),
@@ -236,20 +262,85 @@ class Orchestrator:
         
         return payload
 
-    def submit_daily_answers(self, cycle_id: str, answers: List[Dict[str, Any]]):
+        return entry_id
+    
+    def chat_session(self, message: str, context_history: List[Dict[str, str]]) -> str:
         """
-        answers: [{"question_id": "...", "answer": "..."}]
+        Processes a chat message with RAG context from past diary entries.
         """
-        import json
-        payload = {
-            "cycle_id": cycle_id,
-            "answers": answers
-        }
+        # 1. RAG Retrieval (Focus on 'now', but use 'past' for depth)
+        try:
+            query_vec = self.ollama.embed(self.settings.ollama.embed_model, message)
+            # Filter for diary/journal entries only if possible, but 'open_diary' is the type.
+            hits = self.memory.search(query_vec, limit=3, filters={"feature_type": "open_diary"})
+            rag_context = "\n".join([f"- {h.get('text', '')}" for h in hits])
+        except Exception as e:
+            print(f"Chat RAG Failed: {e}")
+            rag_context = ""
+            
+        # 2. Construct System Prompt
+        system_prompt = (
+            "You are an empathetic, reflective diary companion. "
+            "Your goal is to help the user explore their current thoughts deeper.\n"
+            "INSTRUCTIONS:\n"
+            "- Use the provided [PAST DIARY CONTEXT] to spot patterns if relevant, but...\n"
+            "- PRIORITIZE the user's [CURRENT INPUT] and emotion.\n"
+            "- Do not be purely retrospective. Focus on the 'now'.\n"
+            "- Keep responses concise (2-3 sentences), warm, and non-judgmental.\n\n"
+            f"[PAST DIARY CONTEXT]:\n{rag_context}\n\n"
+            f"[USER PROFILE]:\n{self.user_profile}"
+        )
         
-        # Save
+        # 3. Call LLM
+        messages = [{"role": "system", "content": system_prompt}]
+        # Add history
+        for msg in context_history[-5:]:
+            messages.append({"role": msg.get("role", "user"), "content": msg.get("content", "")})
+        
+        # Add current
+        messages.append({"role": "user", "content": message})
+        
+        try:
+            resp = self.ollama.chat(
+                self.settings.ollama.chat_model, 
+                messages, 
+                options={"num_ctx": self.settings.ollama.num_ctx}
+            )
+            return resp.get("message", {}).get("content", "")
+        except Exception as e:
+            print(f"Chat Gen failed: {e}")
+            return "I'm listening. Please go on."
+
+    def save_diary_session(self, full_transcript: List[Dict[str, str]]) -> str:
+        """
+        Summarizes and saves a completed diary chat session.
+        """
+        # 1. Generate Summary
+        combined_text = "\n".join([f"{m['role']}: {m['content']}" for m in full_transcript])
+        summary = "Diary Session."
+        try:
+            prompt = (
+                "Summarize the following diary conversation in 3-5 sentences. "
+                "Write in the first person (as the user), capturing the core emotions and insights.\n\n"
+                f"{combined_text}"
+            )
+            resp = self.ollama.chat(
+                self.settings.ollama.chat_model,
+                [{"role": "user", "content": prompt}],
+                options={"num_ctx": 2048}
+            )
+            summary = resp.get("message", {}).get("content", "Diary Entry.")
+        except Exception as e:
+            print(f"Summary Gen Failed: {e}")
+            
+        # 2. Persist
+        # We save the summary as the main 'text' for searching, and the transcript in payload/tags/metadata if DB supported it.
+        # For MVP, we'll save the Summary + Transcript as the body.
+        final_content = f"{summary}\n\n---\n[Full Transcript]\n{combined_text}"
+        
         entry_id = self.process_new_entry(
-            text=json.dumps(payload),
-            feature_type="daily_questions_answ", # Truncated to avoid long tag issues if any
-            tags=["daily_answer"]
+            text=final_content,
+            feature_type="open_diary", # This ensures it's found in RAG
+            tags=["diary", "session"]
         )
         return entry_id

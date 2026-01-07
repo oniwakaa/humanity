@@ -6,75 +6,97 @@ from uuid import uuid4
 
 class DailyQuestionGenerator:
     """
-    Generates personalized daily reflection questions.
+    Generates personalized daily reflection questions using a Hybrid Model:
+    - Core Static Set (Fixed)
+    - Dynamic LLM Set (generated from Context)
     """
     
-    # Fallback set if Ollama is down/fails
-    STATIC_FALLBACK = [
-        {"id": "fb1", "type": "mcq", "prompt": "How are you feeling today?", "options": ["Energized", "Calm", "Tired", "Anxious", "Neutral"]},
-        {"id": "fb2", "type": "likert", "prompt": "I felt productive today.", "scale_min": 1, "scale_max": 5, "scale_labels": ["Strongly Disagree", "Strongly Agree"]},
-        {"id": "fb3", "type": "open", "prompt": "What was the highlight of your day?"},
-        {"id": "fb4", "type": "mcq", "prompt": "Who did you spend the most time with?", "options": ["Family", "Friends", "Colleagues", "Alone", "Strangers"]},
-        {"id": "fb5", "type": "likert", "prompt": "I felt true to my values today.", "scale_min": 1, "scale_max": 5, "scale_labels": ["No", "Yes"]},
-        {"id": "fb6", "type": "open", "prompt": "What is one thing you want to do differently tomorrow?"}
+    # 1. The Fixed Core (Static)
+    CORE_QUESTIONS = [
+        {
+            "id": "core_mood",
+            "type": "likert",
+            "text": "How are you feeling overall today?",
+            "lowLabel": "Very Low",
+            "highLabel": "Wonderful"
+        },
+        {
+            "id": "core_presence",
+            "type": "likert",
+            "text": "How present were you in your actions?",
+            "lowLabel": "Distracted", 
+            "highLabel": "Fully Present"
+        },
+        {
+            "id": "core_gratitude",
+            "type": "open",
+            "text": "What is one thing you are grateful for right now?"
+        }
     ]
 
     def build_system_prompt(self, user_profile: str) -> str:
         return (
-            "You are an expert AI coach specializing in deep, personalized reflection.\n"
+            "You are 'The Coach', an expert AI mentor for personal growth.\n"
             f"[USER PROFILE]\n{user_profile}\n"
-            "Your task is to generate a set of 6-10 Daily Deep Questions for the user.\n"
-            "Mix of: \n"
-            "- MCQ (Multiple Choice)\n"
-            "- Likert (Scale 1-5)\n"
-            "- Open-Ended\n"
-            "Output must be strictly valid JSON."
+            "Your goal is to help the user grow by asking probing, insightful questions based on their recent life events.\n"
+            "You must generate 5-7 *new* questions to complement the standard daily check-in.\n"
+            "Output must be strictly valid JSON containing an array of questions."
         )
 
     def build_user_prompt(self, context_text: str) -> str:
         date_str = datetime.now().strftime("%Y-%m-%d")
         return (
             f"Date: {date_str}\n"
-            f"Recent Context:\n{context_text}\n\n"
-            "Generate a JSON object with this structure:\n"
+            f"User's Recent Context (Story/Diary/Reflections):\n{context_text}\n\n"
+            "Based on the struggles, wins, or themes in the context above, generate 7 personalized reflection questions.\n"
+            "Use a mix of:\n"
+            "- 'likert' (Scale 1-7)\n"
+            "- 'open' (Open-ended for deep thought)\n\n"
+            "OUTPUT FORMAT (JSON ONLY). FIELDS MUST MATCH:\n"
+            "- id: string\n"
+            "- type: 'likert' | 'open'\n"
+            "- text: string (The question content)\n"
+            "- lowLabel: string (For likert only, e.g. 'Not at all')\n"
+            "- highLabel: string (For likert only, e.g. 'Completely')\n\n"
+            "EXAMPLE:\n"
             "{\n"
             '  "questions": [\n'
-            '    {"type": "mcq", "prompt": "...", "options": ["A", "B", ...]}, \n'
-            '    {"type": "likert", "prompt": "...", "scale_min": 1, "scale_max": 5, "scale_labels": ["Low", "High"]}, \n'
-            '    {"type": "open", "prompt": "..."}\n'
-            "  ]\n"
-            "}\n"
-            "Ensure questions are non-judgmental, challenging, and varied."
+            '    {"type": "open", "text": "You mentioned anxiety. How did that manifest?"},\n'
+            '    {"type": "likert", "text": "I felt in control of...", "lowLabel": "Low", "highLabel": "High"}\n'
+            '  ]\n'
+            "}"
         )
 
+    def combine_questions(self, dynamic_questions: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Merges Core Static questions with Dynamic ones."""
+        # 1. Start with Core
+        final_set = list(self.CORE_QUESTIONS)
+        
+        # 2. Add Valid Dynamic Questions
+        for q in dynamic_questions:
+            # Basic validation
+            if "text" in q and "type" in q:
+                # Assign ID if missing
+                if "id" not in q:
+                    q["id"] = f"dyn_{str(uuid4())[:8]}"
+                final_set.append(q)
+                
+        # 3. Cap at 10 total
+        return final_set[:10]
+
     def parse_response(self, split_text: str) -> List[Dict[str, Any]]:
-        """Parses LLM output into questions list."""
+        """Parses LLM output into dynamic questions list."""
         try:
-            # Cleanup potential markdown ticks
             clean_text = split_text.strip()
-            if clean_text.startswith("```json"):
-                clean_text = clean_text[7:]
-            if clean_text.endswith("```"):
-                clean_text = clean_text[:-3]
+            # Heuristic cleaning for markdown code blocks
+            if "```json" in clean_text:
+                clean_text = clean_text.split("```json")[1].split("```")[0].strip()
+            elif "```" in clean_text:
+                clean_text = clean_text.split("```")[1].split("```")[0].strip()
             
             data = json.loads(clean_text)
-            qs = data.get("questions", [])
-            
-            # Simple validation
-            valid = []
-            for q in qs:
-                if "prompt" in q and "type" in q:
-                    # add IDs if missing
-                    q["id"] = q.get("id") or str(uuid4())[:8]
-                    valid.append(q)
-                    
-            if len(valid) < 6:
-                # If too few, append fallback to reach 6
-                needed = 6 - len(valid)
-                valid.extend(self.STATIC_FALLBACK[:needed])
-                
-            return valid[:10] # cap at 10
+            return data.get("questions", [])
             
         except Exception as e:
-            print(f"JSON Parsing failed: {e}")
-            return self.STATIC_FALLBACK
+            print(f"JSON Parsing failed during Question Gen: {e}")
+            return [] # Return empty so we just get Core questions

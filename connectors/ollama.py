@@ -6,29 +6,49 @@ from utils.errors import (
 )
 
 class OllamaClient:
-    def __init__(self, base_url: str = "http://127.0.0.1:11434", timeout: float = 30.0):
+    def __init__(self, base_url: str = "http://127.0.0.1:11434", timeout: float = 120.0):
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
+        import threading
+        self.lock = threading.Lock() # Serialize requests to prevent local GPU panic
 
     def _handle_request(self, method: str, endpoint: str, **kwargs) -> Any:
+        import time
         url = f"{self.base_url}{endpoint}"
-        try:
-            response = httpx.request(method, url, timeout=self.timeout, **kwargs)
-            response.raise_for_status()
-            return response.json()
-        except httpx.ConnectError:
-            raise OllamaUnreachableError(f"Could not connect to Ollama at {self.base_url}")
-        except httpx.TimeoutException:
-            raise OllamaTimeoutError(f"Request to {url} timed out after {self.timeout}s")
-        except httpx.HTTPStatusError as e:
-            if e.response.status_code == 404:
-                # potentially model not found or endpoint not found
-                # For chat/generate, usually it returns logic errors in body, but 404 on model pull
-                # We interpret generic 404 as BadResponse unless specific context known
-                 raise OllamaBadResponseError(f"HTTP 404: {e}")
-            raise OllamaBadResponseError(f"HTTP {e.response.status_code}: {e}")
-        except Exception as e:
-            raise OllamaError(f"Unexpected error: {e}")
+        max_retries = 3
+        backoff = 2.0
+        
+        # Acquire lock to ensure only one request hits Ollama at a time
+        with self.lock:
+            for i in range(max_retries):
+                try:
+                    response = httpx.request(method, url, timeout=self.timeout, **kwargs)
+                    response.raise_for_status()
+                    return response.json()
+                except httpx.ConnectError:
+                    raise OllamaUnreachableError(f"Could not connect to Ollama at {self.base_url}")
+                except httpx.TimeoutException:
+                     # On timeout, maybe don't retry immediately inside lock if it takes 30s? 
+                     # Actually if it times out, Ollama is likely stuck. 
+                     # Better to fail fast or retry? 
+                     # For now, treat timeout as failure to avoid 90s hang.
+                    raise OllamaTimeoutError(f"Request to {url} timed out after {self.timeout}s")
+                except httpx.HTTPStatusError as e:
+                    if e.response.status_code == 404:
+                         raise OllamaBadResponseError(f"HTTP 404: {e}")
+                    
+                    if e.response.status_code >= 500:
+                        error_text = e.response.text
+                        print(f"Ollama {e.response.status_code} Error: {error_text}. Retrying {i+1}/{max_retries}...")
+                        time.sleep(backoff)
+                        backoff *= 2
+                        continue
+                        
+                    raise OllamaBadResponseError(f"HTTP {e.response.status_code}: {e}")
+                except Exception as e:
+                    raise OllamaError(f"Unexpected error: {e}")
+            
+            raise OllamaError(f"Failed after {max_retries} retries")
 
     def list_models(self) -> List[str]:
         """Returns a list of available model names."""
@@ -79,7 +99,7 @@ class OllamaClient:
     def check_health(self) -> bool:
         """Quick check if reachable."""
         try:
-            self._handle_request("GET", "/") # basic root check usually works or returns 200 "Ollama is running"
+            self._handle_request("GET", "/api/version") 
             return True
         except:
              return False

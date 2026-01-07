@@ -27,12 +27,36 @@ export default function OpenDiaryPage() {
     const [streamingMessageId, setStreamingMessageId] = useState<string | null>(null);
     const messagesEndRef = useRef<HTMLDivElement>(null);
 
+    const [isSaving, setIsSaving] = useState(false);
+
     // Auto-scroll to bottom on new messages
     useEffect(() => {
         messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
     }, [messages]);
 
-    const handleBack = () => {
+    const handleSave = async () => {
+        if (messages.length <= 1) return; // Don't save empty chats (just welcome msg)
+
+        setIsSaving(true);
+        try {
+            const { api } = await import("@/lib/api");
+            const transcript = messages.map(m => ({
+                role: m.role,
+                content: m.content
+            }));
+            await api.saveDiary(transcript);
+            console.log("Diary saved successfully");
+            // Optionally clear messages or show toast
+        } catch (e) {
+            console.error("Failed to save diary:", e);
+        } finally {
+            setIsSaving(false);
+        }
+    };
+
+    const handleBack = async () => {
+        // Auto-save on exit
+        await handleSave();
         router.push("/app");
     };
 
@@ -132,6 +156,7 @@ export default function OpenDiaryPage() {
                         variant="ghost"
                         size="sm"
                         onClick={handleBack}
+                        disabled={isSaving}
                         className="gap-2 text-muted-foreground hover:text-foreground"
                     >
                         <ArrowLeft className="h-4 w-4" />
@@ -140,7 +165,15 @@ export default function OpenDiaryPage() {
 
                     <h1 className="text-lg font-semibold text-foreground">Open Diary</h1>
 
-                    <div className="w-16" /> {/* Spacer for centering */}
+                    <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => handleSave().then(() => router.push("/app"))}
+                        disabled={isSaving || messages.length <= 1}
+                        className="gap-2"
+                    >
+                        {isSaving ? "Saving..." : "Save Entry"}
+                    </Button>
                 </div>
             </motion.header>
 

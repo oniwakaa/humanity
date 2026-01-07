@@ -407,12 +407,13 @@ interface PromptInputActionProps extends React.ComponentProps<typeof Tooltip> {
   tooltip: React.ReactNode;
   children: React.ReactNode;
   side?: "top" | "bottom" | "left" | "right";
+  className?: string;
 }
 const PromptInputAction: React.FC<PromptInputActionProps> = ({
   tooltip,
   children,
-  className,
   side = "top",
+  className,
   ...props
 }) => {
   const { disabled } = usePromptInput();
@@ -554,12 +555,118 @@ export const PromptInputBox = React.forwardRef((props: PromptInputBoxProps, ref:
     }
   };
 
-  const handleStartRecording = () => console.log("Started recording");
+  // Speech Recognition Logic
+  const shouldListenRef = React.useRef(false);
+  const recognitionRef = React.useRef<any>(null);
+  const [interimTranscript, setInterimTranscript] = React.useState("");
+  // Determine if speech recognition is supported
+  const [isSpeechSupported, setIsSpeechSupported] = React.useState(false);
+
+  React.useEffect(() => {
+    setIsSpeechSupported(
+      typeof window !== "undefined" &&
+      ("SpeechRecognition" in window || "webkitSpeechRecognition" in window)
+    );
+  }, []);
+
+  const startSTT = React.useCallback(() => {
+    if (!isSpeechSupported || typeof window === "undefined") return;
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const SpeechRecognitionAPI = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognitionAPI) return;
+
+    const recognition = new SpeechRecognitionAPI();
+    recognitionRef.current = recognition;
+
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.lang = "en-US";
+
+    recognition.onstart = () => {
+      shouldListenRef.current = true;
+    };
+
+    recognition.onresult = (event: any) => {
+      let incrementalFinal = "";
+      let currentInterim = "";
+
+      for (let i = event.resultIndex; i < event.results.length; ++i) {
+        const transcript = event.results[i][0].transcript;
+        if (event.results[i].isFinal) {
+          incrementalFinal += transcript + " ";
+        } else {
+          currentInterim += transcript;
+        }
+      }
+
+      if (incrementalFinal) {
+        setInput((prev) => {
+          const spacer = prev && !prev.endsWith(" ") ? " " : "";
+          return prev + spacer + incrementalFinal.trim();
+        });
+      }
+      setInterimTranscript(currentInterim);
+    };
+
+    recognition.onend = () => {
+      setInterimTranscript("");
+      if (shouldListenRef.current) {
+        try {
+          recognition.start();
+        } catch (e) {
+          // ignore
+        }
+      } else {
+        // Stopped intentionally
+      }
+    };
+
+    recognition.onerror = (event: any) => {
+      console.warn("Speech recognition error:", event.error);
+      if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
+        shouldListenRef.current = false;
+        setIsRecording(false);
+      }
+    };
+
+    try {
+      recognition.start();
+    } catch (e) {
+      console.error("Failed to start recognition:", e);
+      setIsRecording(false);
+    }
+  }, [isSpeechSupported]);
+
+  const stopSTT = React.useCallback(() => {
+    shouldListenRef.current = false;
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.stop();
+      } catch (e) { /* ignore */ }
+    }
+  }, []);
+
+  React.useEffect(() => {
+    if (isRecording) {
+      startSTT();
+    } else {
+      stopSTT();
+    }
+    return () => {
+      stopSTT();
+    };
+  }, [isRecording, startSTT, stopSTT]);
+
+  // Keep these as no-ops for the VoiceRecorder visual component if needed, 
+  // or use them for strictly logging.
+  const handleStartRecording = () => {
+    // Logic moved to useEffect(isRecording)
+  };
 
   const handleStopRecording = (duration: number) => {
-    console.log(`Stopped recording after ${duration} seconds`);
-    setIsRecording(false);
-    onSend(`[Voice message - ${duration} seconds]`, []);
+    // Logic moved to useEffect(isRecording)
+    // We do NOT want to send a placeholder message anymore.
   };
 
   const hasContent = input.trim() !== "" || files.length > 0;
@@ -633,11 +740,18 @@ export const PromptInputBox = React.forwardRef((props: PromptInputBoxProps, ref:
         </div>
 
         {isRecording && (
-          <VoiceRecorder
-            isRecording={isRecording}
-            onStartRecording={handleStartRecording}
-            onStopRecording={handleStopRecording}
-          />
+          <div className="relative">
+            <VoiceRecorder
+              isRecording={isRecording}
+              onStartRecording={handleStartRecording}
+              onStopRecording={handleStopRecording}
+            />
+            {interimTranscript && (
+              <div className="absolute top-full left-0 right-0 text-center text-white/50 text-sm truncate animate-pulse mt-2 px-4">
+                {interimTranscript}
+              </div>
+            )}
+          </div>
         )}
 
         <PromptInputActions className="flex items-center justify-between gap-2 p-0 pt-2">
