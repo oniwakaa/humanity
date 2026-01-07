@@ -151,7 +151,7 @@ export function DiaryBookOpen({
 
         setIsLoadingChat(true);
         try {
-            const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"}/diary/entries/${id}`);
+            const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000"}/diary/entries/${id}`);
             if (!response.ok) throw new Error("Failed to fetch chat");
 
             const data = await response.json();

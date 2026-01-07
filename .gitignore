@@ -87,3 +87,9 @@ vendor/whisper.cpp/bindings/python/build/
 htmlcov/
 .tox/
 .hypothesis/
+
+# Binaries
+web/backend/
+
+# Logs
+humanity_debug.log

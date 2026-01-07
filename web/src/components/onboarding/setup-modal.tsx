@@ -35,7 +35,7 @@ export default function SetupModal({ onComplete }: SetupModalProps) {
   // Defaults
   const [formData, setFormData] = useState<SetupData>({
     ollamaUrl: "http://127.0.0.1:11434",
-    chatModel: "llama3:latest",
+    chatModel: "hf.co/unsloth/SmolLM3-3B-GGUF:Q4_K_M",
     embedModel: "mxbai-embed-large:latest",
     qdrantUrl: "http://127.0.0.1:6333",
     sttPath: "./models/ggml-base.en.bin",

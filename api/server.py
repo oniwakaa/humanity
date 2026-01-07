@@ -51,7 +51,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -63,8 +63,9 @@ class SetupRequest(BaseModel):
     ollama_url: str
     chat_model: str
     embed_model: str
-    qdrant_url: str
     stt_path: str
+
+    # User Profile
     # User Profile
     profile: Dict[str, Any]
 
@@ -99,7 +100,7 @@ def complete_setup(req: SetupRequest):
     Saves the configuration and user profile.
     This replaces the CLI setup_wizard.py flow.
     """
-    from settings.config_model import AppConfig, OllamaConfig, QdrantConfig, STTConfig
+    from settings.config_model import AppConfig, OllamaConfig, STTConfig
     
     # 1. Save Config
     config = AppConfig(
@@ -108,12 +109,10 @@ def complete_setup(req: SetupRequest):
             chat_model=req.chat_model,
             embed_model=req.embed_model
         ),
-        qdrant=QdrantConfig(
-            url=req.qdrant_url
-        ),
         stt=STTConfig(
             model_path=req.stt_path
-        )
+        ),
+        storage_path="./data" # Default for MVP setup via API
     )
     
     try:

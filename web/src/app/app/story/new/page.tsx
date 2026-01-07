@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ArrowLeft } from "lucide-react";
 import { motion } from "framer-motion";
@@ -15,7 +15,7 @@ import {
 } from "@/lib/story-storage";
 import type { Story } from "@/types/story";
 
-export default function NewStoryPage() {
+function NewStoryContent() {
     const router = useRouter();
     const searchParams = useSearchParams();
     const editId = searchParams.get("edit");
@@ -59,6 +59,10 @@ export default function NewStoryPage() {
             status: "draft",
         };
 
+        saveStory(draft);
+        // Original code called saveStory(draft). 
+        // Let's check original code. 
+        // Line 62: saveStory(draft);
         saveStory(draft);
         setStoryId(id);
     }, [title, content, storyId]);
@@ -149,5 +153,13 @@ export default function NewStoryPage() {
                 </motion.div>
             </main>
         </div>
+    );
+}
+
+export default function NewStoryPage() {
+    return (
+        <Suspense fallback={<div className="flex items-center justify-center min-h-screen">Loading editor...</div>}>
+            <NewStoryContent />
+        </Suspense>
     );
 }

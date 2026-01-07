@@ -112,7 +112,7 @@ interface StackProps extends ComponentProps<'div'> {
   className?: string;
 }
 
-function Stack(props: StackProps) {
+export function Stack(props: StackProps) {
   const {
     children,
     shrink = false,
@@ -158,5 +158,3 @@ function Stack(props: StackProps) {
     </div>
   );
 }
-
-export { Book, Stack }

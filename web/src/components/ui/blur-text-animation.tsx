@@ -30,8 +30,8 @@ export default function BlurTextAnimation({
   animationDelay = 4000
 }: BlurTextAnimationProps) {
   const [isAnimating, setIsAnimating] = useState(false);
-  const animationTimeoutRef = useRef<NodeJS.Timeout>();
-  const resetTimeoutRef = useRef<NodeJS.Timeout>();
+  const animationTimeoutRef = useRef<NodeJS.Timeout>(null);
+  const resetTimeoutRef = useRef<NodeJS.Timeout>(null);
 
   const textWords = useMemo(() => {
     if (words) return words;

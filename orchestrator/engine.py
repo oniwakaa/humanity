@@ -15,8 +15,8 @@ class Orchestrator:
         self.settings = settings_manager.get_config()
         self.journal = DBManager() # Replaces JournalStorage(path)
         self.memory = MemoryLayer(
-            self.settings.qdrant.url, 
-            self.settings.qdrant.collection_name
+            persistence_path=f"{self.settings.storage_path}/chroma",
+            collection_name="journal_entries"
         )
         self.ollama = OllamaClient(self.settings.ollama.base_url)
         self.safety = SafetyGuardrails()

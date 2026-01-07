@@ -7,6 +7,7 @@ import { GetStartedButton } from "@/components/ui/get-started-button";
 import { DottedSurface } from "@/components/ui/dotted-surface";
 import ProfileModal from "@/components/onboarding/profile-modal";
 import SetupModal from "@/components/onboarding/setup-modal";
+import { useBackendHealth } from "@/hooks/use-backend-health"; // Import Hook
 
 export default function Home() {
   const router = useRouter();
@@ -16,28 +17,26 @@ export default function Home() {
   const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000';
   const [backendError, setBackendError] = useState<string | null>(null);
 
+  const { isOnline, isConfigured, isChecking, error } = useBackendHealth(); // Use Hook
+
   useEffect(() => {
     setIsClient(true);
-    // Check backend status
-    fetch(`${API_URL}/setup/status`)
-      .then(res => res.json())
-      .then(data => {
-        setBackendError(null); // Clear error if successful
-        const localCompleted = localStorage.getItem("onboarding_completed") === "true";
-        // If backend is configured AND local marks done, we skip.
-        if (data.is_configured && localCompleted) {
-          router.replace("/app");
-        } else if (!data.is_configured && localCompleted) {
-          // Force reset local state if backend is gone
-          console.log("Backend not configured, resetting local onboarding state.");
-          localStorage.removeItem("onboarding_completed");
-        }
-      })
-      .catch(err => {
-        console.error("Failed to check backend status:", err);
-        setBackendError(`Backend Unreachable (${API_URL}). Please ensure the server is running on port 8000.`);
-      });
-  }, [router]);
+
+    // Auto-redirect if healthy and configured
+    if (isOnline && isConfigured) {
+      const localCompleted = localStorage.getItem("onboarding_completed") === "true";
+      if (localCompleted) {
+        router.replace("/app");
+      }
+    } else if (isOnline && !isConfigured) {
+      // Backend alive but not configured.
+      // Check local state consistency
+      if (localStorage.getItem("onboarding_completed") === "true") {
+        console.log("Backend not configured, resetting local onboarding state.");
+        localStorage.removeItem("onboarding_completed");
+      }
+    }
+  }, [isOnline, isConfigured, router]);
 
   const handleStart = () => {
     setShowProfile(true);
@@ -103,13 +102,21 @@ export default function Home() {
           </p>
         </div>
 
-        {backendError && (
-          <div className="rounded-md bg-destructive/15 p-3 text-destructive">
-            <p className="text-sm font-medium">{backendError}</p>
+        {isChecking && (
+          <div className="flex flex-col items-center gap-2 text-muted-foreground animate-pulse">
+            <div className="h-4 w-4 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+            <p className="text-sm">Connecting to Brain...</p>
           </div>
         )}
 
-        <GetStartedButton onClick={handleStart} />
+        {error && (
+          <div className="rounded-md bg-destructive/15 p-3 text-destructive">
+            <p className="text-sm font-medium">{error}</p>
+          </div>
+        )}
+
+        <GetStartedButton onClick={handleStart} disabled={isChecking || !!error} />
+
       </main>
 
       {showProfile && <ProfileModal onComplete={handleProfileComplete} />}

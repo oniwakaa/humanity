@@ -22,7 +22,7 @@ def main():
     
     # Defaults
     default_ollama_url = "http://127.0.0.1:11434"
-    default_chat_model = "llama3:latest"
+    default_chat_model = "hf.co/unsloth/SmolLM3-3B-GGUF:Q4_K_M"
     default_embed_model = "mxbai-embed-large:latest"
     default_qdrant_url = "http://127.0.0.1:6333"
     default_stt_model = str(Path("./models/ggml-base.en.bin").resolve())
@@ -46,17 +46,25 @@ def main():
     chat_model = Prompt.ask("Chat Model Name", default=default_chat_model)
     if available_models and chat_model not in available_models:
         console.print(f"[yellow]⚠ Warning:[/yellow] Model '{chat_model}' not found in Ollama list.")
+        if Confirm.ask(f"Attempt to pull '{chat_model}' now?", default=True):
+            try:
+                import subprocess
+                console.print(f"[cyan]Running: ollama pull {chat_model}... (this may take a while)[/cyan]")
+                subprocess.run(["ollama", "pull", chat_model], check=True)
+                console.print(f"[green]✔ Successfully pulled {chat_model}[/green]")
+            except Exception as e:
+                console.print(f"[red]✘ Failed to pull model:[/red] {e}")
+                if not Confirm.ask("Continue with missing model?", default=True):
+                     sys.exit(1)
 
     embed_model = Prompt.ask("Embedding Model Name", default=default_embed_model)
     if available_models and embed_model not in available_models:
         console.print(f"[yellow]⚠ Warning:[/yellow] Model '{embed_model}' not found in Ollama list.")
 
-    # --- Step 2: Qdrant Configuration ---
-    console.rule("[bold]Qdrant Configuration[/bold]")
-    qdrant_url = Prompt.ask("Qdrant Base URL", default=default_qdrant_url)
-    # Simple check could be added here similar to Ollama, but we'll trust user/default for now 
-    # or implement a simple request check if we added a specific Qdrant connector already.
-    # For now, we proceed.
+    # --- Step 2: Storage Configuration ---
+    # console.rule("[bold]Storage Configuration[/bold]") 
+    # For MVP we default to ./data but could ask user
+    storage_path = "./data" 
 
     # --- Step 3: STT Configuration ---
     console.rule("[bold]STT Configuration (whisper.cpp)[/bold]")
@@ -71,12 +79,10 @@ def main():
             chat_model=chat_model,
             embed_model=embed_model
         ),
-        qdrant=QdrantConfig(
-            url=qdrant_url
-        ),
         stt=STTConfig(
             model_path=stt_path
-        )
+        ),
+        storage_path=storage_path
     )
 
     try:
