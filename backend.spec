@@ -33,7 +33,12 @@ a = Analysis(
         'rich',
         'rich.console', 
         'rich.panel', 
-        'rich.prompt'
+        'rich.prompt',
+        'connectors',
+        'connectors.ollama',
+        'settings',
+        'settings.manager',
+        'orchestrator'
     ],
     hookspath=[],
     hooksconfig={},

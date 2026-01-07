@@ -109,7 +109,7 @@ function stopBackend() {
 
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
-async function waitForBackend(port, timeoutMs = 20000) {
+async function waitForBackend(port, timeoutMs = 60000) {
     const start = Date.now();
     log(`Waiting for backend on port ${port}... (Timeout: ${timeoutMs}ms)`);
 
@@ -138,7 +138,7 @@ async function waitForBackend(port, timeoutMs = 20000) {
                 return true;
             }
         } catch (err) {
-            log(`Backend check failed: ${err.message}. Retrying...`);
+            // log(`Backend check failed: ${err.message}. Retrying...`);
             await sleep(1000);
         }
     }

@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 
-const MAX_RETRIES = 30; // 15 seconds total (at 500ms interval)
-const RETRY_INTERVAL = 500;
+const MAX_RETRIES = 60; // 60 seconds total (at 1000ms interval)
+const RETRY_INTERVAL = 1000;
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000';
 
 interface HealthStatus {

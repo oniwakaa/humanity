@@ -102,4 +102,21 @@ class OllamaClient:
             self._handle_request("GET", "/api/version") 
             return True
         except:
-             return False
+            return False
+
+    def pull_model(self, model: str):
+        """
+        Pulls a model from the registry. Yields progress status dicts.
+        """
+        url = f"{self.base_url}/api/pull"
+        payload = {"name": model, "stream": True}
+        
+        import json
+        with httpx.stream("POST", url, json=payload, timeout=None) as r:
+            r.raise_for_status()
+            for line in r.iter_lines():
+                if line:
+                    try:
+                        yield json.loads(line)
+                    except:
+                        pass

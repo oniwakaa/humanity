@@ -84,6 +84,51 @@ class DailySubmission(BaseModel):
     cycle_id: str
     answers: List[Dict[str, Any]]
 
+class ModelStatus(BaseModel):
+    name: str
+    status: str # "missing", "downloading", "ready"
+    progress: Optional[float] = 0.0
+    detail: Optional[str] = ""
+
+# --- Global State for Models ---
+model_state: Dict[str, Dict[str, Any]] = {}
+
+async def pull_model_task(model_name: str):
+    global model_state
+    model_state[model_name] = {"status": "downloading", "progress": 0.0, "detail": "Starting..."}
+    
+    # Create temp client if orch not ready
+    from connectors.ollama import OllamaClient
+    client = orchestrator.ollama if orchestrator else OllamaClient()
+    
+    try:
+        iterator = client.pull_model(model_name)
+        for progress in iterator:
+            # progress format from Ollama: {"status": "pulling...", "digest": "...", "total": 123, "completed": 12}
+            status_text = progress.get("status", "")
+            total = progress.get("total", 0)
+            completed = progress.get("completed", 0)
+            
+            pct = 0.0
+            if total > 0:
+                pct = (completed / total) * 100
+            
+            detail = status_text
+            
+            if status_text == "success":
+                model_state[model_name] = {"status": "ready", "progress": 100.0, "detail": "Ready"}
+            else:
+                model_state[model_name] = {"status": "downloading", "progress": pct, "detail": detail}
+            
+            await asyncio.sleep(0.1) # Yield to event loop
+            
+        # Final check
+        model_state[model_name] = {"status": "ready", "progress": 100.0, "detail": "Ready"}
+        
+    except Exception as e:
+        print(f"Error pulling model {model_name}: {e}")
+        model_state[model_name] = {"status": "error", "progress": 0.0, "detail": str(e)}
+
 # --- Endpoints ---
 
 @app.get("/setup/status")
@@ -93,6 +138,61 @@ def get_setup_status():
         "is_configured": settings_mgr.exists(),
         "config_path": str(settings_mgr.config_path)
     }
+
+@app.get("/api/models")
+def get_models_status():
+    """Returns status of required models."""
+    # List of required models
+    required = ["hf.co/unsloth/SmolLM3-3B-GGUF:Q4_K_M", "mxbai-embed-large:latest"]
+    
+    # Check actual presence
+    from connectors.ollama import OllamaClient
+    client = orchestrator.ollama if orchestrator else OllamaClient()
+    
+    try:
+        installed = client.list_models()
+        # Clean names (remove :latest if needed or match exact)
+        # Ollama list_models returns full names e.g. "llama3.2:latest"
+        
+        results = []
+        for req in required:
+            # Check if downloading
+            if req in model_state and model_state[req]["status"] == "downloading":
+                results.append({
+                    "name": req,
+                    "status": "downloading",
+                    "progress": model_state[req]["progress"],
+                    "detail": model_state[req]["detail"]
+                })
+                continue
+            
+            # Check if installed (fuzzy match)
+            is_installed = any(req in m for m in installed)
+            if is_installed:
+                 # Update ready state if it was downloading
+                 if req in model_state and model_state[req]["status"] == "downloading":
+                     model_state[req] = {"status": "ready", "progress": 100.0, "detail": "Ready"}
+                     
+                 results.append({"name": req, "status": "ready", "progress": 100.0, "detail": "Ready"})
+            else:
+                 results.append({"name": req, "status": "missing", "progress": 0.0, "detail": "Not installed"})
+                 
+        return results
+    except Exception as e:
+        # If ollama unreachable
+        return [{"name": m, "status": "error", "detail": str(e)} for m in required]
+
+class PullRequest(BaseModel):
+    name: str
+
+@app.post("/api/models/pull")
+def trigger_pull_model(req: PullRequest, bg_tasks: BackgroundTasks):
+    # Check if already downloading
+    if req.name in model_state and model_state[req.name]["status"] == "downloading":
+        return {"status": "already_downloading"}
+    
+    bg_tasks.add_task(pull_model_task, req.name)
+    return {"status": "started"}
 
 @app.post("/setup/complete")
 def complete_setup(req: SetupRequest):
