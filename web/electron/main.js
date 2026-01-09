@@ -7,7 +7,7 @@ const serve = require('electron-serve');
 
 let mainWindow;
 let backendProcess;
-const IS_DEV = process.env.NODE_ENV === 'development';
+const IS_DEV = !app.isPackaged;
 const BACKEND_PORT = 8000;
 const FRONTEND_PORT = 3000;
 
@@ -151,6 +151,8 @@ async function createWindow() {
     mainWindow = new BrowserWindow({
         width: 1280,
         height: 800,
+        show: false, // Don't show immediately
+        backgroundColor: '#ffffff', // Prevent white flash (or match theme)
         webPreferences: {
             nodeIntegration: false,
             contextIsolation: true,
@@ -172,29 +174,188 @@ async function createWindow() {
         mainWindow.webContents.openDevTools();
     }
 
+    // Wait for content to be ready before showing
+    mainWindow.once('ready-to-show', () => {
+        log('Main Window ready to show.');
+        mainWindow.show();
+
+        // Close splash after main window is visible
+        if (splashWindow) {
+            splashWindow.close();
+            splashWindow = null;
+        }
+    });
+
     mainWindow.on('closed', () => {
         mainWindow = null;
     });
 }
 
-app.whenReady().then(async () => {
-    await startBackend();
+let splashWindow;
 
-    // Wait for backend to be healthy before loading UI
-    // Silent Polling Strategy: Verify connectivity continuously for grace period
-    const isHealthy = await waitForBackend(BACKEND_PORT);
+// Optimized Backend Startup
+// 1. Start Backend Immediately (don't wait for UI)
+// 2. Parse stdout for progress updates
+// 3. Show Splash
+// 4. Show Main when ready
 
-    if (!isHealthy) {
-        log('WARNING: Backend failed health check, but proceeding with UI load.');
-        dialog.showMessageBox({
-            type: 'warning',
-            title: 'Backend Warning',
-            message: 'Backend server may not be ready',
-            detail: 'The backend health check failed. The app may not function correctly. Check the console for details.'
-        });
+// Helper to wait for a URL to be serving (Retry loop)
+async function waitForUrl(url, timeoutMs = 15000) {
+    const start = Date.now();
+    while (Date.now() - start < timeoutMs) {
+        try {
+            await new Promise((resolve, reject) => {
+                const req = http.get(url, (res) => {
+                    if (res.statusCode === 200) resolve();
+                    else reject();
+                });
+                req.on('error', reject);
+                req.end();
+            });
+            return true;
+        } catch (e) {
+            await sleep(500);
+        }
+    }
+    return false;
+}
+
+async function createSplashWindow() {
+    splashWindow = new BrowserWindow({
+        width: 400,
+        height: 300,
+        frame: false,
+        alwaysOnTop: true,
+        transparent: true,
+        center: true,
+        resizable: false,
+        webPreferences: {
+            nodeIntegration: false,
+            contextIsolation: true,
+            preload: path.join(__dirname, 'preload.js'),
+        }
+    });
+
+    const splashUrl = IS_DEV
+        ? `http://localhost:${FRONTEND_PORT}/splash`
+        : `app://-/splash.html`;
+
+    // In Dev, wait for Next.js to be ready
+    if (IS_DEV) {
+        // log('Waiting for Frontend dev server...'); // Optional verbose log
+        await waitForUrl(`http://localhost:${FRONTEND_PORT}`, 15000);
     }
 
+    try {
+        if (splashWindow && !splashWindow.isDestroyed()) {
+            splashWindow.loadURL(splashUrl);
+        }
+    } catch (e) {
+        log(`Failed to load splash URL: ${e.message}`);
+    }
+
+    splashWindow.on('closed', () => {
+        splashWindow = null;
+    });
+}
+
+function updateSplashStatus(status, progress) {
+    if (splashWindow && !splashWindow.isDestroyed()) {
+        splashWindow.webContents.send('init-status', { status, progress });
+    }
+}
+
+async function startBackendAndTrackProgress() {
+    // Ensure clean slate
+    await killOldProcesses();
+
+    log(`Starting backend from: ${BACKEND_PATH}`);
+
+    // Verify file exists (helper for debugging)
+    const fs = require('fs');
+    if (!IS_DEV && !fs.existsSync(BACKEND_PATH)) {
+        console.error(`[Error] Backend binary NOT FOUND at: ${BACKEND_PATH}`);
+        dialog.showErrorBox('Backend Error', `Binary not found at:\n${BACKEND_PATH}`);
+        return;
+    }
+
+    try {
+        backendProcess = spawn(BACKEND_PATH, BACKEND_ARGS, {
+            cwd: IS_DEV ? path.join(__dirname, '../..') : path.join(process.resourcesPath, 'backend'),
+            env: {
+                ...process.env,
+                PYTHONUNBUFFERED: '1',
+                PYTHONPATH: IS_DEV ? path.join(__dirname, '../..') : undefined
+            } // Force unbuffered stdout for real-time logs
+        });
+
+        backendProcess.stdout.on('data', (data) => {
+            const msg = data.toString().trim();
+            log(`[Backend] ${msg}`);
+
+            // Parse [STATUS] content
+            // Expected format: [STATUS] progress_pct || Message
+            // Example: [STATUS] 10 || Loading Models...
+            if (msg.includes('[STATUS]')) {
+                const parts = msg.split('[STATUS]')[1].split('||');
+                if (parts.length >= 2) {
+                    const pct = parseFloat(parts[0].trim());
+                    const text = parts[1].trim();
+                    updateSplashStatus(text, pct);
+                }
+            }
+        });
+
+        backendProcess.stderr.on('data', (data) => {
+            console.error(`[Backend Warn] ${data}`);
+        });
+
+        backendProcess.on('close', (code) => {
+            log(`Backend exited with code ${code}`);
+            if (code !== 0 && code !== null) {
+                // connection lost
+            }
+            backendProcess = null;
+        });
+
+        backendProcess.on('error', (err) => {
+            console.error('[Error] Failed to start backend:', err);
+            dialog.showErrorBox('Backend Start Failed', `Failed to spawn backend:\n${err.message}`);
+        });
+
+    } catch (e) {
+        console.error('[Error] Exception spawning backend:', e);
+        dialog.showErrorBox('Backend Exception', `Exception spawning backend:\n${e.message}`);
+    }
+}
+
+
+app.whenReady().then(async () => {
+    // 1. Show Splash Immediately
+    createSplashWindow();
+
+    // 2. Start Backend & Track Progress
+    startBackendAndTrackProgress();
+
+    // 3. Wait for Backend Health (while splash shows progress)
+    // We give it a generous timeout because the splash screen keeps user engaged
+    const isHealthy = await waitForBackend(BACKEND_PORT, 120000);
+
+    if (!isHealthy) {
+        log('WARNING: Backend failed health check.');
+        if (splashWindow) splashWindow.close();
+        dialog.showErrorBox('Backend Error', 'The backend failed to start. Please check logs.');
+        app.quit();
+        return;
+    }
+
+    // 4. Create Main Window (Hidden initially if needed, but we just show it)
     await createWindow();
+
+    // 5. Close Splash - Handled in createWindow 'ready-to-show'
+    // if (splashWindow) {
+    //     splashWindow.close();
+    // }
 
     app.on('activate', () => {
         if (BrowserWindow.getAllWindows().length === 0) {

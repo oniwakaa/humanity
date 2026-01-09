@@ -1,4 +1,6 @@
 from typing import Dict, Any, List, Optional
+import re
+
 from settings.manager import SettingsManager
 from connectors.ollama import OllamaClient
 from storage.db_manager import DBManager
@@ -7,14 +9,129 @@ from utils.safety import SafetyGuardrails
 from orchestrator.queues import JobQueue
 from orchestrator.survey import SurveyManager
 
+
+def smart_truncate(text: str, max_length: int, prefer_sentence: bool = True) -> str:
+    """
+    Truncate text intelligently at sentence or word boundaries.
+    
+    Args:
+        text: Text to truncate
+        max_length: Maximum character length
+        prefer_sentence: If True, prefer sentence endings (.!?) over word endings
+        
+    Returns:
+        Truncated text with "..." if truncated, original text if within limit
+    """
+    if not text or len(text) <= max_length:
+        return text.strip()
+    
+    # Try to find a sentence boundary first
+    if prefer_sentence:
+        # Find the last sentence-ending punctuation before max_length
+        sentence_end = max(
+            text.rfind('.', 0, max_length),
+            text.rfind('!', 0, max_length),
+            text.rfind('?', 0, max_length)
+        )
+        if sentence_end > max_length * 0.5:  # Only use if we get at least 50% of content
+            return text[:sentence_end + 1].strip()
+    
+    # Fall back to word boundary
+    last_space = text.rfind(' ', 0, max_length)
+    if last_space > max_length * 0.7:  # Only truncate at word if we get 70%+
+        return text[:last_space].strip() + "..."
+    
+    # Last resort: hard truncate
+    return text[:max_length - 3].strip() + "..."
+
+
+def parse_summary_response(raw_response: str) -> Dict[str, str]:
+    """
+    Parse the LLM response to extract title and summary.
+    
+    Handles:
+    - Case-insensitive label detection (Title:, title:, TITLE:, etc.)
+    - Missing labels with graceful fallbacks
+    - Smart truncation to fit UI constraints
+    
+    Args:
+        raw_response: Raw response from LLM
+        
+    Returns:
+        Dict with 'title' and 'summary' keys
+    """
+    result = {
+        "title": "Diary Entry",
+        "summary": "A reflective diary entry."
+    }
+    
+    if not raw_response:
+        return result
+    
+    # Normalize: strip but preserve internal structure
+    text = raw_response.strip()
+    
+    # Try case-insensitive label extraction
+    title_match = None
+    summary_match = None
+    
+    # Look for title (case-insensitive)
+    title_pattern = re.compile(r'^title:\s*(.+)$', re.MULTILINE | re.IGNORECASE)
+    title_matches = title_pattern.findall(text)
+    if title_matches:
+        # Get the title from the first match
+        title_match = title_matches[0].strip()
+        # Remove any trailing labels or content
+        if "\n" in title_match:
+            title_match = title_match.split("\n")[0].strip()
+        # Remove "Summary:" suffix if present
+        title_match = re.split(r'\s+summary:', title_match, flags=re.IGNORECASE)[0].strip()
+    
+    # Look for summary (case-insensitive)
+    summary_pattern = re.compile(r'summary:\s*(.+)$', re.IGNORECASE)
+    summary_match = summary_pattern.search(text)
+    if summary_match:
+        summary_match = summary_match.group(1).strip()
+    
+    # Fallback: if no labels found, try line-based parsing
+    if not title_match or not summary_match:
+        lines = [l.strip() for l in text.split('\n') if l.strip()]
+        if len(lines) >= 2:
+            # Assume first non-empty line is title, rest is summary
+            if not title_match:
+                title_match = lines[0]
+            if not summary_match:
+                summary_match = ' '.join(lines[1:])
+        elif len(lines) == 1:
+            # Single line: use as title, auto-generate summary
+            if not title_match:
+                title_match = lines[0]
+            # summary stays as default
+    
+    # Apply smart truncation
+    if title_match:
+        # Title: max 60 chars, prefer sentence boundary first (though titles rarely have them)
+        result["title"] = smart_truncate(title_match, 60, prefer_sentence=False)
+    
+    if summary_match:
+        # Summary: max 130 chars (leaves room for "..." if needed)
+        result["summary"] = smart_truncate(summary_match, 130, prefer_sentence=True)
+    
+    return result
+
 class Orchestrator:
     def __init__(self, settings_manager: SettingsManager):
+        print("[STATUS] 6 || Reading Settings...", flush=True)
         self.settings = settings_manager.get_config()
         self.journal = DBManager() # Replaces JournalStorage(path)
+        
+        print("[STATUS] 8 || Connecting to Memory Core...", flush=True)
         self.memory = MemoryLayer(
             persistence_path=f"{self.settings.storage_path}/chroma",
             collection_name="journal_entries"
         )
+        
+        print(f"[STATUS] 12 || Initializing Ollama Bridge ({self.settings.ollama.base_url})...", flush=True)
         self.ollama = OllamaClient(self.settings.ollama.base_url)
         self.safety = SafetyGuardrails()
         self.survey_manager = SurveyManager()
@@ -23,6 +140,7 @@ class Orchestrator:
         self.gen_queue = JobQueue(f"{self.settings.storage_path}/gen_jobs.jsonl")
 
         # Load User Profile
+        print("[STATUS] 18 || Loading User Profile...", flush=True)
         self.user_profile = self._load_user_profile()
 
     def _load_user_profile(self) -> str:
@@ -275,29 +393,41 @@ class Orchestrator:
     def save_diary_session(self, full_transcript: List[Dict[str, str]]) -> str:
         """
         Summarizes and saves a completed diary chat session.
+        Generates a concise title and summary for the diary book UI.
         """
-        # 1. Generate Summary
+        # 1. Generate Title and Summary
         combined_text = "\n".join([f"{m['role']}: {m['content']}" for m in full_transcript])
-        summary = "Diary Session."
+        
+        title = "Diary Entry"
+        summary = "A reflective diary entry."
+        
         try:
             prompt = (
-                "Summarize the following diary conversation in 3-5 sentences. "
-                "Write in the first person (as the user), capturing the core emotions and insights.\n\n"
-                f"{combined_text}"
+                "Based ONLY on the following diary conversation, create a very brief title and summary.\n\n"
+                "TITLE: A concise title in 6-8 words (no quotes, no labels).\n"
+                "SUMMARY: A summary in exactly 25-30 words that captures the main themes and emotions discussed.\n"
+                "Write in first person as the user. Do NOT add any information not present in the conversation.\n\n"
+                f"CONVERSATION:\n{combined_text}\n\n"
+                "Format exactly as:\nTitle: <title>\nSummary: <summary>"
             )
             resp = self.ollama.chat(
                 self.settings.ollama.chat_model,
                 [{"role": "user", "content": prompt}],
-                options={"num_ctx": 2048}
+                options={"num_ctx": 2048, "num_predict": 100}  # Strict token limit
             )
-            summary = resp.get("message", {}).get("content", "Diary Entry.")
+            content = resp.get("message", {}).get("content", "")
+            
+            # Parse the response with robust label extraction
+            parsed = parse_summary_response(content)
+            title = parsed["title"]
+            summary = parsed["summary"]
+                
         except Exception as e:
             print(f"Summary Gen Failed: {e}")
             
         # 2. Persist
-        # We save the summary as the main 'text' for searching, and the transcript in payload/tags/metadata if DB supported it.
-        # For MVP, we'll save the Summary + Transcript as the body.
-        final_content = f"{summary}\n\n---\n[Full Transcript]\n{combined_text}"
+        # We save the title + summary as the main content for searching, and the transcript after
+        final_content = f"{title}\n\n{summary}\n\n---\n[Full Transcript]\n{combined_text}"
         
         entry_id = self.process_new_entry(
             text=final_content,

@@ -15,13 +15,9 @@ settings_mgr = SettingsManager()
 orchestrator: Optional[Orchestrator] = None
 worker: Optional[BackgroundWorker] = None
 
-# Initialize if config exists
-if settings_mgr.exists():
-    try:
-        orchestrator = Orchestrator(settings_mgr)
-        worker = BackgroundWorker(orchestrator)
-    except Exception as e:
-        print(f"Failed to initialize orchestrator: {e}")
+# Initialize if config exists - MOVED TO LIFESPAN
+# if settings_mgr.exists():
+#     ...
 
 def require_orchestrator():
     if not orchestrator:
@@ -33,17 +29,48 @@ from api.database import init_db
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
+    print("[STATUS] 10 || Initializing Database...", flush=True)
     init_db() # Create tables
+    
+    # Initialize global state here instead of module level
+    global orchestrator, worker
+    
+    if settings_mgr.exists():
+        try:
+            print("[STATUS] 20 || Loading Configuration...", flush=True)
+            print(f"[STATUS] 30 || Orchestrating AI Cores...", flush=True)
+            orchestrator = Orchestrator(settings_mgr)
+            print(f"[STATUS] 60 || Orchestrator Ready", flush=True)
+            worker = BackgroundWorker(orchestrator)
+        except Exception as e:
+            print(f"Failed to initialize orchestrator: {e}")
+    else:
+        print("[STATUS] 20 || Waiting for Setup...", flush=True)
+        
+    print("[STATUS] 70 || Starting Background Worker...", flush=True)
+    print("[STATUS] 70 || Starting Background Worker...", flush=True)
     if worker:
-        task = asyncio.create_task(worker.run())
+        async def delayed_start():
+             await asyncio.sleep(5) # Let API warm up and UI load first
+             await worker.run()
+        task = asyncio.create_task(delayed_start())
     else:
         task = None
+    
+    # Simulate a check or other init steps
+    print("[STATUS] 80 || Checking Models...", flush=True)
+    # (Checking logic happens in background or parallel usually, but here we just mark progress)
+    
+    print("[STATUS] 90 || Warming up API...", flush=True)
     yield
+    
     # Shutdown
     if worker:
         worker.stop()
     if task:
         await task
+    
+    print("[STATUS] 100 || App Ready", flush=True)
 
 app = FastAPI(title="Humanity API", lifespan=lifespan)
 
@@ -445,14 +472,24 @@ def get_diary_entries(limit: int = 20, offset: int = 0):
             for entry in entries:
                 # Sanitize: remove <think>...</think> tags from stored content
                 import re
+                
                 def sanitize_think_tags(text: str) -> str:
                     return re.sub(r'<think>[\s\S]*?</think>', '', text, flags=re.IGNORECASE).strip()
+                
+                def truncate(text: str, max_len: int) -> str:
+                    """Truncate text to max_len chars, adding ellipsis if truncated."""
+                    if not text:
+                        return text
+                    text = text.strip()
+                    if len(text) <= max_len:
+                        return text
+                    return text[:max_len-3].strip() + "..."
                 
                 clean_text = sanitize_think_tags(entry.text)
                 
                 # Extract title from first line, summary from rest
                 lines = clean_text.split('\n', 1)
-                title = lines[0][:50] if lines else "Diary Entry"
+                title = lines[0][:60] if lines else "Diary Entry"
                 
                 # Clean title: remove quotes, "Diary Session:" prefix, etc.
                 title = title.strip().strip('"').strip()
@@ -464,7 +501,11 @@ def get_diary_entries(limit: int = 20, offset: int = 0):
                 # Remove the transcript portion 
                 if "---" in summary_text:
                     summary_text = summary_text.split("---")[0]
-                summary_text = summary_text.strip()[:200]
+                summary_text = summary_text.strip()[:150]
+                
+                # Post-processing safety limits
+                title = truncate(title, 60)
+                summary_text = truncate(summary_text, 150)
                 
                 # Format date nicely
                 date_str = entry.created_at.strftime("%B %d, %Y") if entry.created_at else "Unknown"
@@ -529,12 +570,28 @@ def get_diary_entry(entry_id: str):
             
             # Extract title and summary
             lines = clean_text.split('\n', 1)
-            title = lines[0][:50] if lines else "Diary Entry"
+            
+            # Helper to truncate with ellipsis
+            def truncate(text: str, max_len: int) -> str:
+                if not text:
+                    return text
+                text = text.strip()
+                if len(text) <= max_len:
+                    return text
+                return text[:max_len-3].strip() + "..."
+            
+            title = lines[0][:60] if lines else "Diary Entry"
             title = title.strip().strip('"').strip()
             if title.lower().startswith("diary session") or not title:
                 title = "Diary Entry"
             
-            summary_text = lines[1].split("---")[0].strip()[:200] if len(lines) > 1 and "---" in lines[1] else ""
+            summary_text = lines[1].split("---")[0].strip() if len(lines) > 1 and "---" in lines[1] else ""
+            if not summary_text:
+                summary_text = lines[1].strip() if len(lines) > 1 else ""
+            
+            # Apply truncation limits
+            title = truncate(title, 60)
+            summary_text = truncate(summary_text, 150)
             
             date_str = entry.created_at.strftime("%B %d, %Y") if entry.created_at else "Unknown"
             
