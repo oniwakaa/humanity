@@ -9,7 +9,7 @@ from rich.panel import Panel
 sys.path.append(os.getcwd())
 
 from settings.manager import SettingsManager
-from settings.config_model import AppConfig, OllamaConfig, QdrantConfig, STTConfig
+from settings.config_model import AppConfig, OllamaConfig, QdrantConfig
 from connectors.ollama import OllamaClient
 from utils.errors import OllamaError
 
@@ -25,7 +25,6 @@ def main():
     default_chat_model = "hf.co/unsloth/SmolLM3-3B-GGUF:Q4_K_M"
     default_embed_model = "mxbai-embed-large:latest"
     default_qdrant_url = "http://127.0.0.1:6333"
-    default_stt_model = str(Path("./models/ggml-base.en.bin").resolve())
 
     # --- Step 1: Ollama Configuration ---
     console.rule("[bold]Ollama Configuration[/bold]")
@@ -66,11 +65,6 @@ def main():
     # For MVP we default to ./data but could ask user
     storage_path = "./data" 
 
-    # --- Step 3: STT Configuration ---
-    console.rule("[bold]STT Configuration (whisper.cpp)[/bold]")
-    stt_path = Prompt.ask("Path to whisper.cpp model (gguf/bin)", default=default_stt_model)
-    if not Path(stt_path).exists():
-        console.print(f"[yellow]⚠ Warning:[/yellow] File at {stt_path} does not exist yet.")
 
     # --- Step 4: Save ---
     config = AppConfig(
@@ -78,9 +72,6 @@ def main():
             base_url=ollama_url,
             chat_model=chat_model,
             embed_model=embed_model
-        ),
-        stt=STTConfig(
-            model_path=stt_path
         ),
         storage_path=storage_path
     )

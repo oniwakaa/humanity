@@ -63,7 +63,6 @@ class SetupRequest(BaseModel):
     ollama_url: str
     chat_model: str
     embed_model: str
-    stt_path: str
 
     # User Profile
     # User Profile
@@ -200,17 +199,14 @@ def complete_setup(req: SetupRequest):
     Saves the configuration and user profile.
     This replaces the CLI setup_wizard.py flow.
     """
-    from settings.config_model import AppConfig, OllamaConfig, STTConfig
-    
+    from settings.config_model import AppConfig, OllamaConfig
+
     # 1. Save Config
     config = AppConfig(
         ollama=OllamaConfig(
             base_url=req.ollama_url,
             chat_model=req.chat_model,
             embed_model=req.embed_model
-        ),
-        stt=STTConfig(
-            model_path=req.stt_path
         ),
         storage_path="./data" # Default for MVP setup via API
     )
@@ -293,33 +289,6 @@ def verify_connections():
     except Exception as e:
         return {"error": str(e)}
 
-@app.post("/story/start")
-def start_story_session():
-    orch = require_orchestrator()
-    try:
-        orch.start_recording_session()
-        return {"status": "started"}
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to start recording: {e}")
-
-@app.post("/story/stop", response_model=EntryResponse)
-def stop_story_session():
-    orch = require_orchestrator()
-    try:
-        text = orch.stop_recording_session()
-        if not text.strip():
-             return EntryResponse(id="none", message="No text transcribed.")
-             
-        entry_id = orch.process_new_entry(
-            text=text, 
-            feature_type="your_story",
-            tags=["voice", "your_story"]
-        )
-        return EntryResponse(id=entry_id, message="Story saved.")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error processing story: {e}")
 
 @app.post("/story/reflect")
 def reflect_on_story(req: ReflectionRequest):

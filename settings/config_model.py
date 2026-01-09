@@ -11,17 +11,10 @@ class OllamaConfig(BaseModel):
 # QdrantConfig removed
 
 
-class STTConfig(BaseModel):
-    model_path: str = Field(..., description="Absolute path to the whisper.cpp model file (gguf)")
-    device_index: int = Field(default=0, description="Audio input device index")
-    sample_rate: int = Field(default=16000, description="Audio sample rate")
-    step_duration: float = Field(default=0.5, description="Duration in seconds for streaming step")
-
 class AppConfig(BaseModel):
     model_config = ConfigDict(validate_assignment=True)
-    
+
     ollama: OllamaConfig
     # qdrant: QdrantConfig # Removed in favor of embedded Chroma
 
-    stt: STTConfig
     storage_path: str = Field(default="./data", description="Path to store journal entries")

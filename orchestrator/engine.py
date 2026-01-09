@@ -5,9 +5,6 @@ from storage.db_manager import DBManager
 from storage.memory import MemoryLayer
 from utils.safety import SafetyGuardrails
 from orchestrator.queues import JobQueue
-
-from utils.audio_session import AudioSession
-from stt.engine import STTEngine
 from orchestrator.survey import SurveyManager
 
 class Orchestrator:
@@ -24,19 +21,9 @@ class Orchestrator:
         
         self.embed_queue = JobQueue(f"{self.settings.storage_path}/embed_jobs.jsonl")
         self.gen_queue = JobQueue(f"{self.settings.storage_path}/gen_jobs.jsonl")
-        
+
         # Load User Profile
         self.user_profile = self._load_user_profile()
-
-        # Audio Session State
-        self.stt_engine = STTEngine(self.settings.stt.model_path)
-        try:
-            self.stt_engine.load_model()
-        except Exception as e:
-            print(f"Failed to load STT model: {e}")
-            
-        self.current_session: Optional[AudioSession] = None
-        self.latest_transcript = ""
 
     def _load_user_profile(self) -> str:
         """Scans journal for latest survey entry."""
@@ -67,32 +54,6 @@ class Orchestrator:
         
         return "Interaction Style: Neutral. New user."
 
-    def start_recording_session(self):
-        """Starts a 'Your Story' voice session."""
-        if self.current_session and self.current_session.active:
-            raise ValueError("Session already active")
-            
-        def on_transcript(text):
-            self.latest_transcript = text
-            # In a real app, we'd push this via Websocket to UI
-            
-        self.current_session = AudioSession(self.stt_engine, on_transcript)
-        self.current_session.start()
-    
-    def stop_recording_session(self) -> str:
-        """Stops session and returns final text."""
-        if not self.current_session:
-            raise ValueError("No active session")
-            
-        self.current_session.stop()
-        self.current_session = None
-        
-        # Return the accumulated text
-        # Note: process_stream returns "current partial".
-        # If the window rolled over, we lost data. 
-        # fixing that requires STTEngine to commit segments.
-        # For MVP, we presume `latest_transcript` is the best we have.
-        return self.latest_transcript
 
     def process_new_entry(self, text: str, feature_type: str, tags: List[str] = None):
         """

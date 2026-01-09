@@ -9,7 +9,7 @@ sys.path.append(str(Path(__file__).parent.parent))
 import shutil
 import tempfile
 from settings.manager import SettingsManager
-from settings.config_model import AppConfig, OllamaConfig, QdrantConfig, STTConfig
+from settings.config_model import AppConfig, OllamaConfig, QdrantConfig
 
 @pytest.fixture(scope="function")
 def test_dir():
@@ -39,7 +39,6 @@ def mock_settings(test_dir):
             return AppConfig(
                 ollama=OllamaConfig(base_url="http://localhost:11434", num_ctx=2048),
                 qdrant=QdrantConfig(url="http://localhost:6333", collection_name="test_journal"),
-                stt=STTConfig(model_path="mock_path"),
                 storage_path=test_dir
             )
             
