@@ -4,7 +4,11 @@ from sqlalchemy.orm import sessionmaker
 import os
 
 # Local SQLite database
-SQLALCHEMY_DATABASE_URL = "sqlite:///./humanity.db"
+# Use env var for persistence in packaged app
+import os
+data_dir = os.getenv("HUMANITY_DATA_DIR", ".")
+os.makedirs(data_dir, exist_ok=True)
+SQLALCHEMY_DATABASE_URL = f"sqlite:///{os.path.join(data_dir, 'humanity.db')}"
 
 # Create engine
 # check_same_thread=False is needed for SQLite with FastAPI multi-threading

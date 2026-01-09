@@ -32,13 +32,27 @@
     },
     "mac": {
       "target": "dmg",
+      "icon": "resources/icon.icns",
       "hardenedRuntime": true,
       "gatekeeperAssess": false,
       "entitlements": "entitlements.mac.plist",
-      "entitlementsInherit": "entitlements.mac.plist"
+      "entitlementsInherit": "entitlements.mac.plist",
+      "extraResources": [
+        {
+          "from": "../dist/humanity-backend",
+          "to": "backend/humanity-backend"
+        }
+      ]
     },
     "win": {
-      "target": "nsis"
+      "target": "nsis",
+      "icon": "resources/icon.png",
+      "extraResources": [
+        {
+          "from": "../dist/humanity-backend.exe",
+          "to": "backend/humanity-backend.exe"
+        }
+      ]
     }
   },
   "dependencies": {

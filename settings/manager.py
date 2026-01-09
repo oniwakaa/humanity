@@ -7,7 +7,9 @@ from .config_model import AppConfig
 CONFIG_FILE_NAME = "config.json"
 
 class SettingsManager:
-    def __init__(self, config_dir: str = "."):
+    def __init__(self, config_dir: Optional[str] = None):
+        if config_dir is None:
+            config_dir = os.getenv("HUMANITY_DATA_DIR", ".")
         self.config_dir = Path(config_dir)
         self.config_path = self.config_dir / CONFIG_FILE_NAME
         self._config: Optional[AppConfig] = None

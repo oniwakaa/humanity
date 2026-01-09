@@ -15,9 +15,10 @@ const FRONTEND_PORT = 3000;
 const loadURL = IS_DEV ? null : serve({ directory: path.join(__dirname, '../out') });
 
 // Path to backend executable or script
+const binaryName = process.platform === 'win32' ? 'humanity-backend.exe' : 'humanity-backend';
 const BACKEND_PATH = IS_DEV
     ? path.join(__dirname, '../../venv/bin/python') // Dev: Use venv python
-    : path.join(process.resourcesPath, 'backend', 'humanity-backend'); // Prod: Bundled binary
+    : path.join(process.resourcesPath, 'backend', binaryName); // Prod: Bundled binary
 
 const BACKEND_ARGS = IS_DEV
     ? [path.join(__dirname, '../../api/server.py')]
@@ -62,9 +63,14 @@ async function startBackend() {
     }
 
     try {
+        const userDataPath = app.getPath('userData');
         backendProcess = spawn(BACKEND_PATH, BACKEND_ARGS, {
             cwd: IS_DEV ? path.join(__dirname, '../..') : path.join(process.resourcesPath, 'backend'),
-            env: { ...process.env, PYTHONUNBUFFERED: '1' }
+            env: {
+                ...process.env,
+                PYTHONUNBUFFERED: '1',
+                HUMANITY_DATA_DIR: userDataPath
+            }
         });
 
         backendProcess.stdout.on('data', (data) => {
@@ -280,12 +286,14 @@ async function startBackendAndTrackProgress() {
     }
 
     try {
+        const userDataPath = app.getPath('userData');
         backendProcess = spawn(BACKEND_PATH, BACKEND_ARGS, {
             cwd: IS_DEV ? path.join(__dirname, '../..') : path.join(process.resourcesPath, 'backend'),
             env: {
                 ...process.env,
                 PYTHONUNBUFFERED: '1',
-                PYTHONPATH: IS_DEV ? path.join(__dirname, '../..') : undefined
+                PYTHONPATH: IS_DEV ? path.join(__dirname, '../..') : undefined,
+                HUMANITY_DATA_DIR: userDataPath
             } // Force unbuffered stdout for real-time logs
         });
 
