@@ -62,6 +62,7 @@ async def lifespan(app: FastAPI):
     # (Checking logic happens in background or parallel usually, but here we just mark progress)
     
     print("[STATUS] 90 || Warming up API...", flush=True)
+    print("[STATUS] 100 || App Ready", flush=True)
     yield
     
     # Shutdown
@@ -69,8 +70,6 @@ async def lifespan(app: FastAPI):
         worker.stop()
     if task:
         await task
-    
-    print("[STATUS] 100 || App Ready", flush=True)
 
 app = FastAPI(title="Humanity API", lifespan=lifespan)
 
