@@ -27,7 +27,7 @@ export default function DashboardPage() {
     const features = [
         {
             title: "Your Story",
-            description: "Build your personal narrative through guided voice conversations. Track your growth and milestones over time.",
+            description: "Write freely about your life without distractions. A clean, focused space for your thoughts.",
             action: "Continue Story",
             gradient: [
                 { color: 'rgba(255, 140, 66, 1)', stop: '10.5%' }, // Deep Amber
@@ -42,7 +42,7 @@ export default function DashboardPage() {
         },
         {
             title: "Daily Reflection",
-            description: "Deepen self-awareness with structured prompts. A quiet space to process your day and align with your values.",
+            description: "Answer personalized questions tailored to your day. Reflect when it matters most.",
             action: "Start Reflection",
             gradient: [
                 { color: 'rgba(30, 60, 114, 1)', stop: '10.5%' },  // Deep Blue
@@ -57,7 +57,7 @@ export default function DashboardPage() {
         },
         {
             title: "Your Diary",
-            description: "Capture spontaneous thoughts and emotions freely. A private, unrestricted space for your rawest expression.",
+            description: "Journal with your local AI. It asks deeper questions as you write, helping you explore each moment fully.",
             action: "Open Diary",
             gradient: [
                 { color: 'rgba(180, 30, 90, 1)', stop: '10.5%' },  // Deep Magenta
