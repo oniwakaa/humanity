@@ -1,4 +1,4 @@
-import { mockStories, type Story, type StoryStatus } from "@/types/story";
+import type { Story, StoryStatus } from "@/types/story";
 
 const STORAGE_KEY = "humanity_stories";
 
@@ -16,13 +16,11 @@ function parseStoredStories(data: string): Story[] {
 }
 
 export function getStories(): Story[] {
-    if (typeof window === "undefined") return mockStories;
+    if (typeof window === "undefined") return [];
 
     const stored = localStorage.getItem(STORAGE_KEY);
     if (!stored) {
-        // Initialize with mock data on first load
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(mockStories));
-        return mockStories;
+        return [];
     }
 
     return parseStoredStories(stored);
