@@ -242,25 +242,25 @@ class Orchestrator:
         try:
              query_vec = self.ollama.embed(self.settings.ollama.embed_model, context_query)
              hits = self.memory.search(query_vec, limit=3)
-             
+              
              context_text = "\n".join([h.get("text", "") for h in hits])
         except Exception as e:
              print(f"RAG Retrieval failed: {e}")
              context_text = ""
-        
+         
         # 2. Form Prompt
         system_prompt = (
-            "You are a helpful, empathetic AI journaling assistant. "
+            "You are a thoughtful AI companion helping users reflect deeply on their lives. "
             "Your goal is to help the user reflect on their thoughts. "
             f"\n[PERSONALIZATION]\n{self.user_profile}\n"
             f"{self.safety.get_system_prompt_addendum()}"
         )
-        
-        user_prompt = f"Relevant past memories:\n{context_text}\n\nCurrent thought or topic: {context_query}\n\nSuggest a deep, non-judgmental follow-up question."
-        
+         
+        user_prompt = f"Relevant past memories:\n{context_text}\n\nCurrent thought or topic: {context_query}\n\nSuggest a deep, non-judgmental follow-up question. Ask 'why' and 'how' more than 'what' to explore emotions."
+         
         if not self.safety.check_prompt(user_prompt):
             return "I can't provide a reflection on this topic due to safety guidelines."
-            
+             
         # 3. Call LLM
         try:
             messages = [
@@ -283,51 +283,60 @@ class Orchestrator:
         from orchestrator.daily_questions import DailyQuestionGenerator
         from datetime import datetime
         from uuid import uuid4
-        
+         
         # 0. Check for existing Cycle for today (Latency/Caching Strategy)
         # Note: In a real app we query DB. For now, we generate fresh or check last entry if we had that logic.
         # But prompt asked for "Propose... or implement". 
         # We will implement "Generate Fresh" but efficiently.
-        
+         
         generator = DailyQuestionGenerator()
         cycle_id = str(uuid4())
-        
+         
         # 1. Retrieve Context (Hybrid Input)
         context_text = ""
+        recent_themes = ""
         try:
             # Query vector store for recent themes
             query_vec = self.ollama.embed(self.settings.ollama.embed_model, "Recent thoughts patterns feelings events")
             hits = self.memory.search(query_vec, limit=5)
             context_text = "\n".join([f"- {h.get('text', '')}" for h in hits])
+            
+            # Extract recurring themes
+            themes = set()
+            for h in hits:
+                text = h.get('text', '')
+                if text:
+                    themes.add(text.split()[0])  # Simple heuristic for themes
+            recent_themes = ", ".join(list(themes)[:3])  # Top 3 themes
         except Exception as e:
              print(f"Context retrieval failed: {e}")
-
+         
         # 2. Call LLM (Dynamic Part)
         dynamic_questions = []
         try:
-            sys_prompt = generator.build_system_prompt(self.user_profile)
+            sys_prompt = generator.build_system_prompt(self.user_profile, context_text, recent_themes)
             user_prompt = generator.build_user_prompt(context_text)
-            
+             
             resp = self.ollama.chat(self.settings.ollama.chat_model, [
                 {"role": "system", "content": sys_prompt},
                 {"role": "user", "content": user_prompt}
             ], options={"num_ctx": self.settings.ollama.num_ctx})
-            
+             
             content = resp.get("message", {}).get("content", "")
             dynamic_questions = generator.parse_response(content)
         except Exception as e:
             print(f"Daily Gen LLM Failed: {e}")
-            
+             
         # 3. Merge (Hybrid Output)
         final_questions = generator.combine_questions(dynamic_questions)
-            
+             
         # 4. Persist Set
         payload = {
             "cycle_id": cycle_id,
             "date": datetime.now().isoformat(),
             "questions": final_questions
         }
-        
+         
         # Save to DB via new Manager
         # We store as a special entry type or better, use the DailyCycle model if we updated manager to support it.
         # Current DBManager only supports Entry.
@@ -338,7 +347,7 @@ class Orchestrator:
             feature_type="daily_questions_set",
             tags=["daily_generated"]
         )
-        
+         
         return payload
 
         return entry_id
@@ -359,13 +368,15 @@ class Orchestrator:
             
         # 2. Construct System Prompt
         system_prompt = (
-            "You are an empathetic, reflective diary companion. "
+            "You are a thoughtful AI companion helping users reflect deeply on their lives. "
             "Your goal is to help the user explore their current thoughts deeper.\n"
             "INSTRUCTIONS:\n"
             "- Use the provided [PAST DIARY CONTEXT] to spot patterns if relevant, but...\n"
             "- PRIORITIZE the user's [CURRENT INPUT] and emotion.\n"
             "- Do not be purely retrospective. Focus on the 'now'.\n"
-            "- Keep responses concise (2-3 sentences), warm, and non-judgmental.\n\n"
+            "- Keep responses concise (2-3 sentences), warm, and non-judgmental.\n"
+            "- Ask 'why' and 'how' more than 'what' to explore emotions.\n"
+            "- Reference past entries when relevant (e.g., 'Last week you mentioned...').\n\n"
             f"[PAST DIARY CONTEXT]:\n{rag_context}\n\n"
             f"[USER PROFILE]:\n{self.user_profile}"
         )
