@@ -34,11 +34,17 @@ class DailyQuestionGenerator:
         }
     ]
 
-    def build_system_prompt(self, user_profile: str) -> str:
+    def build_system_prompt(self, user_profile: str, user_context: str = "", recent_themes: str = "") -> str:
         return (
-            "You are 'The Coach', an expert AI mentor for personal growth.\n"
+            "You are a thoughtful AI companion helping users reflect deeply on their lives.\n"
             f"[USER PROFILE]\n{user_profile}\n"
+            f"[RECENT CONTEXT]\n{user_context}\n"
+            f"[RECURRING THEMES]\n{recent_themes}\n"
             "Your goal is to help the user grow by asking probing, insightful questions based on their recent life events.\n"
+            "Start with broad questions and narrow based on user responses.\n"
+            "Reference past entries when relevant (e.g., 'Last week you mentioned...').\n"
+            "Ask 'why' and 'how' more than 'what' to explore emotions.\n"
+            "Follow emotional threads (e.g., if the user mentions stress or joy, explore that).\n"
             "You must generate 5-7 *new* questions to complement the standard daily check-in.\n"
             "Output must be strictly valid JSON containing an array of questions."
         )
@@ -51,7 +57,10 @@ class DailyQuestionGenerator:
             "Based on the struggles, wins, or themes in the context above, generate 7 personalized reflection questions.\n"
             "Use a mix of:\n"
             "- 'likert' (Scale 1-7)\n"
-            "- 'open' (Open-ended for deep thought)\n\n"
+            "- 'open' (Open-ended for deep thought)\n"
+            "Ask 'why' and 'how' more than 'what' to explore emotions.\n"
+            "Reference past entries when relevant (e.g., 'Last week you mentioned...').\n"
+            "Follow emotional threads (e.g., if the user mentions stress or joy, explore that).\n\n"
             "OUTPUT FORMAT (JSON ONLY). FIELDS MUST MATCH:\n"
             "- id: string\n"
             "- type: 'likert' | 'open'\n"
