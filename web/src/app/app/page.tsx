@@ -4,22 +4,32 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { BGPattern } from "@/components/ui/bg-pattern";
 import { HumanityCard } from "@/components/dashboard/humanity-card";
-import { Typewriter } from "@/components/ui/typewriter-text"; // Verify this import path aligns with existing component
+import { Typewriter } from "@/components/ui/typewriter-text";
+import { ProfileDropdown } from "@/components/ui/profile-dropdown";
 import { motion } from "framer-motion";
 
 export default function DashboardPage() {
     const router = useRouter();
     const [userName, setUserName] = useState<string>("");
+    const [profile, setProfile] = useState<{ name: string; email: string; avatar?: string } | null>(null);
 
     useEffect(() => {
         // Retrieve user name from localStorage on mount
         const profileStr = localStorage.getItem("user_profile");
         if (profileStr) {
             try {
-                const profile = JSON.parse(profileStr);
-                setUserName(profile.firstName || profile.name || "Traveller");
+                const parsed = JSON.parse(profileStr);
+                const name = parsed.firstName || parsed.name || "Traveller";
+                setUserName(name);
+                setProfile({
+                    name,
+                    email: parsed.email || "",
+                    avatar: parsed.avatar,
+                });
             } catch (e) {
                 console.error("Failed to parse user profile", e);
+                setUserName("Traveller");
+                setProfile({ name: "Traveller", email: "" });
             }
         }
     }, []);
@@ -82,6 +92,19 @@ export default function DashboardPage() {
                 fill="currentColor"
             />
 
+            {/* Header with Profile Dropdown */}
+            <header className="fixed top-0 left-0 right-0 z-50 px-4 sm:px-6 py-4">
+                <div className="mx-auto max-w-7xl flex items-center justify-end">
+                    <ProfileDropdown
+                        profile={profile || undefined}
+                        onSignOut={() => {
+                            // TODO: Implement sign out logic
+                            router.push("/");
+                        }}
+                    />
+                </div>
+            </header>
+
             <main className="container mx-auto flex min-h-screen flex-col items-center justify-center px-4 py-20 relative z-10">
 
                 {/* Welcome Header */}
@@ -125,4 +148,3 @@ export default function DashboardPage() {
         </div>
     );
 }
-
