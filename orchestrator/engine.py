@@ -8,6 +8,11 @@ from storage.memory import MemoryLayer
 from utils.safety import SafetyGuardrails
 from orchestrator.queues import JobQueue
 from orchestrator.survey import SurveyManager
+from second_brain.background_processor import (
+    SecondBrainWorker,
+    queue_second_brain_task,
+    SecondBrainContextInjector
+)
 
 
 def smart_truncate(text: str, max_length: int, prefer_sentence: bool = True) -> str:
@@ -143,6 +148,18 @@ class Orchestrator:
         print("[STATUS] 18 || Loading User Profile...", flush=True)
         self.user_profile = self._load_user_profile()
 
+        # Initialize Second Brain components
+        print("[STATUS] 19 || Initializing Second Brain...", flush=True)
+        self.second_brain_worker = SecondBrainWorker(
+            self.ollama,
+            self.settings.ollama.embed_model,
+            self.settings.ollama.chat_model
+        )
+        self.second_brain_injector = SecondBrainContextInjector(
+            self.ollama,
+            self.settings.ollama.embed_model
+        )
+
     def _load_user_profile(self) -> str:
         """Scans journal for latest survey entry."""
         # Inefficient for large journals, but fine for MVP MVP with small data.
@@ -178,11 +195,12 @@ class Orchestrator:
         Main entry point for saving content.
         1. Access Journal Storage -> Write
         2. Create Embedding Job -> Queue
+        3. Create Second Brain Job -> Queue (for tagging, linking, knowledge graph)
         """
         # 1. Save to Journal
         entry_id = self.journal.add_entry(text, feature_type, tags)
-        
-        # 2. Queue for Embedding
+
+        # 2. Queue for Embedding (legacy Chroma pipeline)
         if feature_type != "no_memory": # Check consent
             self.embed_queue.push({
                 "type": "embed",
@@ -190,7 +208,17 @@ class Orchestrator:
                 "text": text,
                 "timestamp": 0 # TODO: use real TS
             })
-            
+
+        # 3. Queue for Second Brain processing (tagging, linking, embeddings)
+        # This runs in parallel and enhances the knowledge graph
+        if feature_type != "no_memory":
+            queue_second_brain_task(
+                self.embed_queue,  # Reuse same queue file for simplicity
+                item_id=entry_id,
+                content=text,
+                item_type=feature_type
+            )
+
         return entry_id
 
     def run_embedding_worker(self):
@@ -238,7 +266,18 @@ class Orchestrator:
 
     def generate_reflection(self, context_query: str) -> str:
         """Generates a reflection based on context."""
-        # 1. Search Memory
+        # 1. Second Brain Context Retrieval
+        second_brain_context = ""
+        try:
+            second_brain_context = self.second_brain_injector.get_context_sync(
+                query_text=context_query,
+                token_budget=400
+            )
+        except Exception as e:
+            print(f"Second Brain context retrieval failed: {e}")
+            second_brain_context = ""
+
+        # 2. Search Memory
         try:
              query_vec = self.ollama.embed(self.settings.ollama.embed_model, context_query)
              hits = self.memory.search(query_vec, limit=3)
@@ -248,10 +287,11 @@ class Orchestrator:
              print(f"RAG Retrieval failed: {e}")
              context_text = ""
          
-        # 2. Form Prompt
+        # 3. Form Prompt
         system_prompt = (
             "You are a thoughtful AI companion helping users reflect deeply on their lives. "
             "Your goal is to help the user reflect on their thoughts. "
+            f"\n[SECOND BRAIN CONTEXT]\n{second_brain_context}\n"
             f"\n[PERSONALIZATION]\n{self.user_profile}\n"
             f"{self.safety.get_system_prompt_addendum()}"
         )
@@ -356,7 +396,18 @@ class Orchestrator:
         """
         Processes a chat message with RAG context from past diary entries.
         """
-        # 1. RAG Retrieval (Focus on 'now', but use 'past' for depth)
+        # 1. Second Brain Context Retrieval
+        second_brain_context = ""
+        try:
+            second_brain_context = self.second_brain_injector.get_context_sync(
+                query_text=message,
+                token_budget=400
+            )
+        except Exception as e:
+            print(f"Second Brain context retrieval failed: {e}")
+            second_brain_context = ""
+
+        # 2. RAG Retrieval (Focus on 'now', but use 'past' for depth)
         try:
             query_vec = self.ollama.embed(self.settings.ollama.embed_model, message)
             # Filter for diary/journal entries only if possible, but 'open_diary' is the type.
@@ -366,22 +417,23 @@ class Orchestrator:
             print(f"Chat RAG Failed: {e}")
             rag_context = ""
             
-        # 2. Construct System Prompt
+        # 3. Construct System Prompt
         system_prompt = (
             "You are a thoughtful AI companion helping users reflect deeply on their lives. "
             "Your goal is to help the user explore their current thoughts deeper.\n"
             "INSTRUCTIONS:\n"
-            "- Use the provided [PAST DIARY CONTEXT] to spot patterns if relevant, but...\n"
+            "- Use the provided context to spot patterns if relevant, but...\n"
             "- PRIORITIZE the user's [CURRENT INPUT] and emotion.\n"
             "- Do not be purely retrospective. Focus on the 'now'.\n"
             "- Keep responses concise (2-3 sentences), warm, and non-judgmental.\n"
             "- Ask 'why' and 'how' more than 'what' to explore emotions.\n"
             "- Reference past entries when relevant (e.g., 'Last week you mentioned...').\n\n"
+            f"[SECOND BRAIN CONTEXT]:\n{second_brain_context}\n\n"
             f"[PAST DIARY CONTEXT]:\n{rag_context}\n\n"
             f"[USER PROFILE]:\n{self.user_profile}"
         )
         
-        # 3. Call LLM
+        # 4. Call LLM
         messages = [{"role": "system", "content": system_prompt}]
         # Add history
         for msg in context_history[-5:]:
@@ -446,3 +498,20 @@ class Orchestrator:
             tags=["diary", "session"]
         )
         return entry_id
+
+    def shutdown(self):
+        """
+        Clean shutdown of orchestrator resources.
+        Call this when the app is closing to ensure threads are stopped.
+        """
+        print("[SHUTDOWN] Cleaning up orchestrator resources...", flush=True)
+        
+        # Shutdown Second Brain context injector
+        try:
+            if hasattr(self, 'second_brain_injector') and self.second_brain_injector:
+                self.second_brain_injector.shutdown()
+                print("[SHUTDOWN] Second Brain context injector stopped", flush=True)
+        except Exception as e:
+            print(f"[SHUTDOWN] Error stopping Second Brain: {e}", flush=True)
+        
+        print("[SHUTDOWN] Orchestrator cleanup complete", flush=True)

@@ -93,3 +93,4 @@ web/backend/
 
 # Logs
 humanity_debug.log
+.mantic/

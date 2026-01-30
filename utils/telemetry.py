@@ -1,6 +1,5 @@
 import logging
 from logging.handlers import RotatingFileHandler
-from user_secrets import get_secret # Hypothetical safe import or just standard logging
 
 class TelemetryLogger:
     def __init__(self, log_dir: str = "./logs"):
@@ -30,3 +29,21 @@ class TelemetryLogger:
 
     def log_error(self, error_type: str, message: str):
         self.logger.error(f"ERROR: {error_type} - {message}")
+
+# Simple module-level logger factory
+_logger_cache = {}
+
+def get_logger(name: str) -> logging.Logger:
+    """Get or create a logger for the given module name."""
+    if name not in _logger_cache:
+        logger = logging.getLogger(name)
+        # Only add handler if not already configured
+        if not logger.handlers:
+            handler = logging.StreamHandler()
+            handler.setLevel(logging.WARNING)
+            formatter = logging.Formatter('%(name)s - %(levelname)s - %(message)s')
+            handler.setFormatter(formatter)
+            logger.addHandler(handler)
+            logger.setLevel(logging.WARNING)
+        _logger_cache[name] = logger
+    return _logger_cache[name]
