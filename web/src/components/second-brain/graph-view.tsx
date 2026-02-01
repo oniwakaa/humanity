@@ -2,10 +2,11 @@
 
 import React, { useEffect, useRef, useState, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { ZoomIn, ZoomOut, Maximize, Filter, X, Tag, Brain, FileText, Network } from "lucide-react";
+import { ZoomIn, ZoomOut, Maximize, Filter, X, Tag, Brain, FileText, Network, ArrowRight, WandSparkles, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
+import { useRouter } from "next/navigation";
 import { GraphNode, GraphLink, GraphData } from "./graph-data";
 
 interface GraphViewProps {
@@ -42,7 +43,94 @@ const NODE_ICONS: Record<string, React.ReactNode> = {
   date: <Network className="w-3 h-3" />,
 };
 
+/**
+ * Apply Magic Wander layout algorithm
+ * Uses grid-based positioning with connectivity-aware placement
+ */
+function applyMagicWanderLayout(
+  nodes: SimulatedNode[],
+  links: SimulatedLink[],
+  dimensions: { width: number; height: number }
+): SimulatedNode[] {
+  if (nodes.length === 0) return [];
+  
+  // Calculate grid dimensions
+  const gridSize = Math.ceil(Math.sqrt(nodes.length));
+  const cellSize = Math.min(150, dimensions.width / gridSize, dimensions.height / gridSize);
+  const offsetX = (dimensions.width - gridSize * cellSize) / 2;
+  const offsetY = (dimensions.height - gridSize * cellSize) / 2;
+  
+  // Create a copy of nodes with connectivity scores
+  const nodesWithConnectivity = nodes.map(node => {
+    const connectedLinks = links.filter(link => 
+      link.source.id === node.id || link.target.id === node.id
+    );
+    const connectivity = connectedLinks.length;
+    return { ...node, connectivity };
+  });
+  
+  // Sort nodes by connectivity (highly connected nodes first)
+  const sortedNodes = [...nodesWithConnectivity].sort((a, b) => b.connectivity - a.connectivity);
+  
+  // Position nodes on grid using space-filling curve for better edge routing
+  const resultNodes: SimulatedNode[] = [];
+  
+  for (let i = 0; i < sortedNodes.length; i++) {
+    const node = sortedNodes[i];
+    const col = i % gridSize;
+    const row = Math.floor(i / gridSize);
+    
+    // Use a spiral pattern for more natural layout
+    const spiralRadius = Math.sqrt(i) * 0.5;
+    const spiralAngle = i * 0.1;
+    const spiralX = Math.cos(spiralAngle) * spiralRadius;
+    const spiralY = Math.sin(spiralAngle) * spiralRadius;
+    
+    // Combine grid and spiral for organic but organized layout
+    const x = offsetX + col * cellSize + spiralX * cellSize * 0.3;
+    const y = offsetY + row * cellSize + spiralY * cellSize * 0.3;
+    
+    resultNodes.push({
+      ...node,
+      x,
+      y
+    });
+  }
+  
+  // Apply edge crossing reduction by adjusting connected nodes
+  for (let iter = 0; iter < 3; iter++) {
+    links.forEach(link => {
+      const sourceNode = resultNodes.find(n => n.id === link.source.id);
+      const targetNode = resultNodes.find(n => n.id === link.target.id);
+      
+      if (sourceNode && targetNode) {
+        // Slightly adjust positions to reduce edge crossings
+        const dx = targetNode.x - sourceNode.x;
+        const dy = targetNode.y - sourceNode.y;
+        const distance = Math.sqrt(dx * dx + dy * dy);
+        
+        if (distance < cellSize * 0.8) {
+          // Move nodes apart if too close
+          const repelForce = 0.2;
+          sourceNode.x -= dx * repelForce;
+          sourceNode.y -= dy * repelForce;
+          targetNode.x += dx * repelForce;
+          targetNode.y += dy * repelForce;
+        }
+      }
+    });
+  }
+  
+  // Ensure nodes stay within bounds
+  return resultNodes.map(node => ({
+    ...node,
+    x: Math.max(50, Math.min(dimensions.width - 50, node.x)),
+    y: Math.max(50, Math.min(dimensions.height - 50, node.y))
+  }));
+}
+
 export function GraphView({ data, className, onNodeClick }: GraphViewProps) {
+  const router = useRouter();
   const containerRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
   const [dimensions, setDimensions] = useState({ width: 800, height: 600 });
@@ -54,6 +142,9 @@ export function GraphView({ data, className, onNodeClick }: GraphViewProps) {
   const [hoveredNode, setHoveredNode] = useState<SimulatedNode | null>(null);
   const [selectedNode, setSelectedNode] = useState<SimulatedNode | null>(null);
   const [activeFilters, setActiveFilters] = useState<Set<string>>(new Set());
+  const [isFilterOpen, setIsFilterOpen] = useState(true);
+  const [isMagicWanderActive, setIsMagicWanderActive] = useState(false);
+  const [magicWanderSuccess, setMagicWanderSuccess] = useState(false);
   const animationRef = useRef<number>();
   const isPanning = useRef(false);
   const panStart = useRef({ x: 0, y: 0 });
@@ -66,11 +157,11 @@ export function GraphView({ data, className, onNodeClick }: GraphViewProps) {
     const { width, height } = containerRef.current.getBoundingClientRect();
     setDimensions({ width, height });
 
-    // Initialize nodes with random positions near center
+    // Initialize nodes with random positions across the entire canvas
     const initialNodes: SimulatedNode[] = data.nodes.map((node) => ({
       ...node,
-      x: width / 2 + (Math.random() - 0.5) * 200,
-      y: height / 2 + (Math.random() - 0.5) * 200,
+      x: Math.random() * (width - 100) + 50,
+      y: Math.random() * (height - 100) + 50,
       vx: 0,
       vy: 0,
     }));
@@ -85,6 +176,67 @@ export function GraphView({ data, className, onNodeClick }: GraphViewProps) {
         target: targetNode,
       };
     });
+
+    // Pre-warm the simulation to improve initial layout
+    const preWarmSimulation = (nodes: SimulatedNode[], links: SimulatedLink[], iterations: number = 100) => {
+      const centerX = width / 2;
+      const centerY = height / 2;
+      
+      for (let iter = 0; iter < iterations; iter++) {
+        for (let i = 0; i < nodes.length; i++) {
+          const node = nodes[i];
+          if (node.fx !== null && node.fy !== null) continue; // Skip fixed nodes
+
+          // Repulsion force
+          for (let j = 0; j < nodes.length; j++) {
+            if (i === j) continue;
+            const other = nodes[j];
+            const dx = node.x - other.x;
+            const dy = node.y - other.y;
+            const distance = Math.sqrt(dx * dx + dy * dy) || 1;
+            const force = (5000 * (node.size || 20) * (other.size || 20)) / (distance * distance);
+            const fx = (dx / distance) * force * 0.02;
+            const fy = (dy / distance) * force * 0.02;
+            node.vx += fx;
+            node.vy += fy;
+          }
+
+          // Attraction to center (reduced)
+          const dx = centerX - node.x;
+          const dy = centerY - node.y;
+          node.vx += dx * 0.0001;
+          node.vy += dy * 0.0001;
+
+          // Link attraction
+          links.forEach((link) => {
+            if (link.source.id === node.id || link.target.id === node.id) {
+              const other = link.source.id === node.id ? link.target : link.source;
+              const ldx = other.x - node.x;
+              const ldy = other.y - node.y;
+              const distance = Math.sqrt(ldx * ldx + ldy * ldy) || 1;
+              const targetDistance = 150 + (node.size || 20) + (other.size || 20);
+              const strength = (link.strength || 0.5) * 0.0015;
+              node.vx += (ldx / distance) * (distance - targetDistance) * strength;
+              node.vy += (ldy / distance) * (distance - targetDistance) * strength;
+            }
+          });
+
+          // Apply velocity with damping
+          node.vx *= 0.85;
+          node.vy *= 0.85;
+          node.x += node.vx;
+          node.y += node.vy;
+
+          // Boundary constraints
+          const padding = 50 + (node.size || 20);
+          node.x = Math.max(padding, Math.min(width - padding, node.x));
+          node.y = Math.max(padding, Math.min(height - padding, node.y));
+        }
+      }
+    };
+
+    // Run pre-warming
+    preWarmSimulation(initialNodes, initialLinks);
 
     setNodes(initialNodes);
     setLinks(initialLinks);
@@ -105,39 +257,39 @@ export function GraphView({ data, className, onNodeClick }: GraphViewProps) {
           const node = newNodes[i];
           if (node.fx !== null && node.fy !== null) continue; // Skip fixed nodes
 
-          // Repulsion force (nodes repel each other)
-          for (let j = 0; j < newNodes.length; j++) {
-            if (i === j) continue;
-            const other = newNodes[j];
-            const dx = node.x - other.x;
-            const dy = node.y - other.y;
-            const distance = Math.sqrt(dx * dx + dy * dy) || 1;
-            const force = (3000 * (node.size || 20) * (other.size || 20)) / (distance * distance);
-            const fx = (dx / distance) * force * 0.01;
-            const fy = (dy / distance) * force * 0.01;
-            node.vx += fx;
-            node.vy += fy;
-          }
+           // Repulsion force (nodes repel each other) - increased for better initial distribution
+           for (let j = 0; j < newNodes.length; j++) {
+             if (i === j) continue;
+             const other = newNodes[j];
+             const dx = node.x - other.x;
+             const dy = node.y - other.y;
+             const distance = Math.sqrt(dx * dx + dy * dy) || 1;
+             const force = (5000 * (node.size || 20) * (other.size || 20)) / (distance * distance);
+             const fx = (dx / distance) * force * 0.02;
+             const fy = (dy / distance) * force * 0.02;
+             node.vx += fx;
+             node.vy += fy;
+           }
 
-          // Attraction to center
-          const dx = centerX - node.x;
-          const dy = centerY - node.y;
-          node.vx += dx * 0.0005;
-          node.vy += dy * 0.0005;
+           // Attraction to center - reduced to allow better spread
+           const dx = centerX - node.x;
+           const dy = centerY - node.y;
+           node.vx += dx * 0.0001;
+           node.vy += dy * 0.0001;
 
-          // Link attraction
-          links.forEach((link) => {
-            if (link.source.id === node.id || link.target.id === node.id) {
-              const other = link.source.id === node.id ? link.target : link.source;
-              const ldx = other.x - node.x;
-              const ldy = other.y - node.y;
-              const distance = Math.sqrt(ldx * ldx + ldy * ldy) || 1;
-              const targetDistance = 100 + (node.size || 20) + (other.size || 20);
-              const strength = (link.strength || 0.5) * 0.001;
-              node.vx += (ldx / distance) * (distance - targetDistance) * strength;
-              node.vy += (ldy / distance) * (distance - targetDistance) * strength;
-            }
-          });
+           // Link attraction - increased target distance for better initial spread
+           links.forEach((link) => {
+             if (link.source.id === node.id || link.target.id === node.id) {
+               const other = link.source.id === node.id ? link.target : link.source;
+               const ldx = other.x - node.x;
+               const ldy = other.y - node.y;
+               const distance = Math.sqrt(ldx * ldx + ldy * ldy) || 1;
+               const targetDistance = 150 + (node.size || 20) + (other.size || 20);
+               const strength = (link.strength || 0.5) * 0.0015;
+               node.vx += (ldx / distance) * (distance - targetDistance) * strength;
+               node.vy += (ldy / distance) * (distance - targetDistance) * strength;
+             }
+           });
 
           // Apply velocity with damping
           node.vx *= 0.85;
@@ -248,6 +400,30 @@ export function GraphView({ data, className, onNodeClick }: GraphViewProps) {
     onNodeClick?.(node);
   }, [onNodeClick]);
 
+  // Handle navigation to entry
+  const handleNavigateToEntry = useCallback((node: SimulatedNode) => {
+    if (!node.metadata?.entryId) return;
+    
+    // Determine navigation target based on entry type
+    const entryType = node.metadata.entryType || "note";
+    const entryId = node.metadata.entryId;
+    
+    switch (entryType) {
+      case "reflection":
+        router.push(`/app/story?entry=${entryId}`);
+        break;
+      case "conversation":
+        router.push(`/app/diary?entry=${entryId}`);
+        break;
+      case "note":
+      default:
+        router.push(`/app/diary?entry=${entryId}`);
+        break;
+    }
+  }, [router]);
+
+
+
   // Filter nodes
   const toggleFilter = useCallback((type: string) => {
     setActiveFilters((prev) => {
@@ -273,6 +449,67 @@ export function GraphView({ data, className, onNodeClick }: GraphViewProps) {
           activeFilters.has(l.target.type)
       );
 
+  // Handle Magic Wander layout reorganization
+  const handleMagicWander = useCallback(() => {
+    setIsMagicWanderActive(true);
+    setMagicWanderSuccess(false);
+    
+    // Pause current simulation by canceling animation frame
+    if (animationRef.current) {
+      cancelAnimationFrame(animationRef.current);
+    }
+    
+    // Use only visible nodes for reorganization
+    const nodesToOrganize = activeFilters.size === 0 ? nodes : nodes.filter(n => activeFilters.has(n.type));
+    
+    if (nodesToOrganize.length <= 1) {
+      // Not enough nodes to reorganize
+      setIsMagicWanderActive(false);
+      return;
+    }
+    
+    // Apply grid-based layout with edge crossing reduction
+    const reorganizedNodes = applyMagicWanderLayout(nodesToOrganize, visibleLinks, dimensions);
+    
+    // Animate to new positions
+    setNodes(prevNodes => {
+      return prevNodes.map(node => {
+        const reorganizedNode = reorganizedNodes.find(n => n.id === node.id);
+        if (reorganizedNode) {
+          return {
+            ...node,
+            x: reorganizedNode.x,
+            y: reorganizedNode.y,
+            vx: 0,
+            vy: 0,
+            fx: reorganizedNode.x, // Fix position temporarily
+            fy: reorganizedNode.y
+          };
+        }
+        return node;
+      });
+    });
+    
+    // After animation completes, release fixed positions and resume gentle simulation
+    setTimeout(() => {
+      setNodes(prevNodes => {
+        return prevNodes.map(node => ({
+          ...node,
+          fx: null,
+          fy: null
+        }));
+      });
+      
+      setIsMagicWanderActive(false);
+      setMagicWanderSuccess(true);
+      
+      // Success indicator disappears after 2 seconds
+      setTimeout(() => {
+        setMagicWanderSuccess(false);
+      }, 2000);
+    }, 800);
+  }, [nodes, visibleLinks, activeFilters, dimensions]);
+
   return (
     <div
       ref={containerRef}
@@ -297,53 +534,106 @@ export function GraphView({ data, className, onNodeClick }: GraphViewProps) {
           >
             <ZoomOut className="h-4 w-4" />
           </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={handleReset}
-            className="h-8 w-8"
-          >
-            <Maximize className="h-4 w-4" />
-          </Button>
-        </Card>
-      </div>
+           <Button
+             variant="ghost"
+             size="icon"
+             onClick={handleReset}
+             className="h-8 w-8"
+           >
+             <Maximize className="h-4 w-4" />
+           </Button>
+           <Button
+             variant="ghost"
+             size="icon"
+             onClick={handleMagicWander}
+             disabled={isMagicWanderActive}
+             className="h-8 w-8 relative"
+           >
+             {isMagicWanderActive ? (
+               <div className="h-4 w-4 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+             ) : (
+               <WandSparkles className="h-4 w-4" />
+             )}
+             {magicWanderSuccess && (
+               <AnimatePresence>
+                 <motion.div
+                   initial={{ scale: 0, rotate: -45 }}
+                   animate={{ scale: 1, rotate: 0 }}
+                   exit={{ scale: 0, rotate: 45 }}
+                   transition={{ type: "spring", damping: 10, stiffness: 200 }}
+                   className="absolute -top-1 -right-1 h-4 w-4 rounded-full bg-green-500 flex items-center justify-center border-2 border-white"
+                 >
+                   <Check className="h-3 w-3 text-white" />
+                 </motion.div>
+               </AnimatePresence>
+             )}
+           </Button>
+         </Card>
+       </div>
 
-      {/* Filters */}
+      {/* Filter Toggle Button */}
       <div className="absolute top-4 right-4 z-10">
-        <Card className="p-3">
-          <div className="flex items-center gap-2 mb-2">
-            <Filter className="h-4 w-4 text-muted-foreground" />
-            <span className="text-sm font-medium">Filter</span>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            {["entry", "tag", "topic"].map((type) => (
-              <Button
-                key={type}
-                variant={activeFilters.has(type) ? "default" : "outline"}
-                size="sm"
-                onClick={() => toggleFilter(type)}
-                className={cn(
-                  "text-xs capitalize",
-                  activeFilters.has(type) && "bg-primary text-primary-foreground"
-                )}
-              >
-                {type}
-              </Button>
-            ))}
-            {activeFilters.size > 0 && (
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => setActiveFilters(new Set())}
-                className="text-xs"
-              >
-                <X className="h-3 w-3 mr-1" />
-                Clear
-              </Button>
-            )}
-          </div>
-        </Card>
+        <Button
+          variant="outline"
+          size="icon"
+          className="h-8 w-8 relative"
+          onClick={() => setIsFilterOpen(prev => !prev)}
+        >
+          <Filter className={`h-4 w-4 transition-colors ${isFilterOpen ? 'text-primary' : 'text-muted-foreground'}`} />
+          {activeFilters.size > 0 && (
+            <span className="absolute -top-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full bg-primary text-xs text-primary-foreground">
+              {activeFilters.size}
+            </span>
+          )}
+        </Button>
       </div>
+      
+      {/* Toggleable Filter Panel */}
+      <AnimatePresence>
+        {isFilterOpen && (
+          <motion.div
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+            transition={{ duration: 0.2 }}
+            className="absolute top-16 right-4 z-10"
+          >
+            <Card className="p-3 w-48">
+              <div className="flex items-center gap-2 mb-2">
+                <Filter className="h-4 w-4 text-primary" />
+                <span className="text-sm font-medium">Filter</span>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {["entry", "tag", "topic"].map((type) => (
+                  <Button
+                    key={type}
+                    variant={activeFilters.has(type) ? "default" : "outline"}
+                    size="sm"
+                    onClick={() => toggleFilter(type)}
+                    className={cn(
+                      "text-xs capitalize",
+                      activeFilters.has(type) && "bg-primary text-primary-foreground"
+                    )}
+                  >
+                    {type}
+                  </Button>
+                ))}
+                {activeFilters.size > 0 && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setActiveFilters(new Set())}
+                    className="text-xs"
+                  >
+                    <X className="h-3 w-3 mr-1" />
+                    Clear
+                  </Button>
+                )}
+              </div>
+            </Card>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Node details panel */}
       <AnimatePresence>
@@ -376,27 +666,38 @@ export function GraphView({ data, className, onNodeClick }: GraphViewProps) {
                   <X className="h-3 w-3" />
                 </Button>
               </div>
-              <div className="text-xs text-muted-foreground">
-                <p className="capitalize">Type: {selectedNode.type}</p>
-                {selectedNode.metadata?.entryDate && (
-                  <p>Date: {selectedNode.metadata.entryDate}</p>
-                )}
-                {selectedNode.metadata?.snippet && (
-                  <p className="mt-2 line-clamp-3">{selectedNode.metadata.snippet}</p>
-                )}
-                {selectedNode.metadata?.tags && selectedNode.metadata.tags.length > 0 && (
-                  <div className="flex flex-wrap gap-1 mt-2">
-                    {selectedNode.metadata.tags.map((tag) => (
-                      <span
-                        key={tag}
-                        className="px-1.5 py-0.5 bg-secondary rounded text-[10px]"
-                      >
-                        {tag}
-                      </span>
-                    ))}
-                  </div>
-                )}
-              </div>
+               <div className="text-xs text-muted-foreground">
+                 <p className="capitalize">Type: {selectedNode.type}</p>
+                 {selectedNode.metadata?.entryDate && (
+                   <p>Date: {selectedNode.metadata.entryDate}</p>
+                 )}
+                 {selectedNode.metadata?.snippet && (
+                   <p className="mt-2 line-clamp-3">{selectedNode.metadata.snippet}</p>
+                 )}
+                 {selectedNode.metadata?.tags && selectedNode.metadata.tags.length > 0 && (
+                   <div className="flex flex-wrap gap-1 mt-2">
+                     {selectedNode.metadata.tags.map((tag) => (
+                       <span
+                         key={tag}
+                         className="px-1.5 py-0.5 bg-secondary rounded text-[10px]"
+                       >
+                         {tag}
+                       </span>
+                     ))}
+                   </div>
+                 )}
+               </div>
+               {selectedNode.metadata?.entryId && (
+                 <Button
+                   variant="outline"
+                   size="sm"
+                   className="w-full mt-3 gap-2"
+                   onClick={() => handleNavigateToEntry(selectedNode)}
+                 >
+                   <ArrowRight className="h-3 w-3" />
+                   View Entry
+                 </Button>
+               )}
             </Card>
           </motion.div>
         )}

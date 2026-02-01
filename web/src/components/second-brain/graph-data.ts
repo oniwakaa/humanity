@@ -12,6 +12,8 @@ export interface GraphNode {
     entryDate?: string;
     snippet?: string;
     tags?: string[];
+    entryId?: string; // For navigation to source entry
+    entryType?: "note" | "reflection" | "conversation"; // For determining navigation target
   };
 }
 
@@ -33,12 +35,12 @@ export interface GraphData {
  */
 export function generateMockGraphData(): GraphData {
   const entries: GraphNode[] = [
-    { id: "entry-1", label: "Morning Reflection", type: "entry", size: 20, metadata: { entryDate: "2024-01-15", snippet: "Felt energized today..." } },
-    { id: "entry-2", label: "Work Challenges", type: "entry", size: 18, metadata: { entryDate: "2024-01-14", snippet: "Difficult meeting with..." } },
-    { id: "entry-3", label: "Weekend Plans", type: "entry", size: 15, metadata: { entryDate: "2024-01-13", snippet: "Looking forward to..." } },
-    { id: "entry-4", label: "Gratitude Entry", type: "entry", size: 22, metadata: { entryDate: "2024-01-12", snippet: "Thankful for family..." } },
-    { id: "entry-5", label: "Creative Ideas", type: "entry", size: 16, metadata: { entryDate: "2024-01-11", snippet: "New project concept..." } },
-    { id: "entry-6", label: "Evening Thoughts", type: "entry", size: 14, metadata: { entryDate: "2024-01-10", snippet: "Wind down routine..." } },
+    { id: "entry-1", label: "Morning Reflection", type: "entry", size: 20, metadata: { entryDate: "2024-01-15", snippet: "Felt energized today...", entryId: "diary-1", entryType: "reflection" } },
+    { id: "entry-2", label: "Work Challenges", type: "entry", size: 18, metadata: { entryDate: "2024-01-14", snippet: "Difficult meeting with...", entryId: "diary-2", entryType: "note" } },
+    { id: "entry-3", label: "Weekend Plans", type: "entry", size: 15, metadata: { entryDate: "2024-01-13", snippet: "Looking forward to...", entryId: "diary-3", entryType: "note" } },
+    { id: "entry-4", label: "Gratitude Entry", type: "entry", size: 22, metadata: { entryDate: "2024-01-12", snippet: "Thankful for family...", entryId: "story-1", entryType: "reflection" } },
+    { id: "entry-5", label: "Creative Ideas", type: "entry", size: 16, metadata: { entryDate: "2024-01-11", snippet: "New project concept...", entryId: "diary-4", entryType: "note" } },
+    { id: "entry-6", label: "Evening Thoughts", type: "entry", size: 14, metadata: { entryDate: "2024-01-10", snippet: "Wind down routine...", entryId: "diary-5", entryType: "conversation" } },
   ];
 
   const tags: GraphNode[] = [

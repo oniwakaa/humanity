@@ -41,11 +41,17 @@ export function DottedSurface({ className, ...props }: DottedSurfaceProps) {
 		camera.lookAt(0, 0, 0);
 
 		// Renderer
-		const renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
-		renderer.setPixelRatio(window.devicePixelRatio);
-		renderer.setSize(window.innerWidth, window.innerHeight);
-		renderer.setClearColor(0x000000, 0);
-		container.appendChild(renderer.domElement);
+		let renderer: THREE.WebGLRenderer;
+		try {
+			renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
+			renderer.setPixelRatio(window.devicePixelRatio);
+			renderer.setSize(window.innerWidth, window.innerHeight);
+			renderer.setClearColor(0x000000, 0);
+			container.appendChild(renderer.domElement);
+		} catch (error) {
+			console.warn('WebGL Context not available:', error);
+			return;
+		}
 
 		// Particles
 		const numParticles = AMOUNTX * AMOUNTY;
